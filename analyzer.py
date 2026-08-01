@@ -1,23 +1,25 @@
 import os
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
 
 
 load_dotenv()
 
-genai.configure(
+
+client = genai.Client(
     api_key=os.getenv("GEMINI_API_KEY")
 )
 
 
-model = genai.GenerativeModel(
-    os.getenv("GEMINI_MODEL")
+MODEL = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-3.6-flash"
 )
 
 
 def analyze_document(text):
 
-    prompt = """
+    prompt = f"""
 You are an experienced Delivery Manager.
 
 Analyze the project meeting notes below.
@@ -31,13 +33,16 @@ Extract:
 5. Action items with owners and deadlines
 6. Executive summary
 
-Format the answer clearly.
+Provide a clear structured response.
 
 Meeting notes:
 
-""" + text
+{text}
+"""
 
-
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt
+    )
 
     return response.text
