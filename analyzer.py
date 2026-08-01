@@ -11,7 +11,7 @@ genai.configure(
 
 
 model = genai.GenerativeModel(
-    "gemini-2.5-flash"
+    os.getenv("GEMINI_MODEL")
 )
 
 
