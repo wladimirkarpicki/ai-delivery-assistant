@@ -1,48 +1,85 @@
-import os
-from dotenv import load_dotenv
-from google import genai
+from router import ModelRouter
 
 
-load_dotenv()
+router = ModelRouter()
 
 
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
 
+def build_prompt(text):
+    """
+    Build prompt for meeting analysis.
+    """
 
-MODEL = os.getenv(
-    "GEMINI_MODEL",
-    "gemini-3.6-flash"
-)
-
-
-def analyze_document(text):
-
-    prompt = f"""
+    return f"""
 You are an experienced Delivery Manager.
 
-Analyze the project meeting notes below.
+Analyze the meeting notes below.
 
-Extract:
+Provide a structured delivery analysis:
 
-1. Overall project status
-2. Key risks
-3. Blockers
-4. Decisions made
-5. Action items with owners and deadlines
-6. Executive summary
+## Executive Summary
 
-Provide a clear structured response.
+Summarize the key discussion points.
 
-Meeting notes:
+## Project Status
+
+Describe:
+- current progress
+- completed items
+- items in progress
+
+## Risks
+
+List all identified risks.
+Include impact and mitigation if available.
+
+## Blockers
+
+List all blockers preventing progress.
+
+## Decisions Made
+
+List important decisions.
+
+## Action Items
+
+For each action item provide:
+- task
+- owner
+- deadline (if mentioned)
+
+Meeting Notes:
 
 {text}
 """
 
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=prompt
+
+
+def analyze_document(
+        text,
+        provider,
+        model
+):
+    """
+    Analyze meeting notes using selected AI provider.
+
+    Args:
+        text (str): meeting notes
+        provider (str): provider name (google/groq)
+        model (str): selected model
+
+    Returns:
+        str: AI response
+    """
+
+    prompt = build_prompt(text)
+
+
+    result = router.generate(
+        provider=provider,
+        model=model,
+        prompt=prompt
     )
 
-    return response.text
+
+    return result
