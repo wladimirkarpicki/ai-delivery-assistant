@@ -1,278 +1,155 @@
 # AI Delivery Assistant
 
-AI-powered assistant for Project Managers and Delivery Managers that transforms meeting notes into structured delivery insights.
+AI-powered meeting notes analyzer for project and delivery management.
 
-The application uses Large Language Models (LLMs) to analyze project discussions and generate:
+The application analyzes meeting notes and extracts structured delivery insights such as project status, risks, blockers, decisions, and action items.
 
-- Executive summaries
-- Project status updates
-- Risks and blockers
-- Decisions
-- Action items with owners and deadlines
+## Features
 
-Built with a modular AI provider architecture that allows switching between different LLM providers and models.
+- 🤖 Multiple AI providers:
+  - Google Gemini
+  - Groq
+- 🔽 Model selection through the UI
+- 🎯 Supported-model filtering
+- 📄 Upload meeting notes:
+  - PDF
+  - DOCX
+  - TXT
+  - Markdown
+- 📝 Paste meeting notes directly
+- 📊 Structured delivery analysis
+- ⚡ Streamlit web interface
+- 🔐 API keys stored in environment variables
 
----
+## Supported Models
 
-## ✨ Features
+### Google Gemini
 
-### AI Meeting Analysis
+- `gemini-3.6-flash`
+- `gemini-3.5-flash`
+- `gemma-4-31b-it`
+- `gemma-4-26b-a4b-it`
 
-Convert unstructured meeting notes into structured delivery documentation.
+### Groq
 
-Generated insights:
+- `llama-3.3-70b-versatile`
+- `qwen/qwen3.6-27b`
+- `llama-3.1-8b-instant`
 
-- 📌 Executive Summary
-- 📊 Project Status
-- ⚠️ Risks
-- 🚧 Blockers
-- ✅ Decisions Made
-- 📋 Action Items
+The application discovers available models through the provider APIs and filters them against the application's supported-model configuration.
 
----
+## Analysis
 
-### Multi-Model AI Support
+The assistant produces:
 
-The application supports multiple AI providers through a unified routing layer.
+- Executive Summary
+- Project Status
+- Completed Items
+- Items in Progress
+- Risks
+- Blockers
+- Decisions Made
+- Action Items
+- Owners and Deadlines
 
-Currently supported:
+## Architecture
 
-#### Google Gemini
-
-- Gemini 3.6 Flash
-
-#### Groq
-
-Available models include:
-
-- Llama 3.3 70B
-- Llama 3.1 8B Instant
-- Qwen
-- Other available Groq models
-
-Models can be selected dynamically from the application UI.
-
----
-
-# 🏗️ Architecture
+```text
 Streamlit UI
-                 |
-                 v
-          Analyzer Layer
-                 |
-                 v
-           Model Router
-                 |
-      +----------+----------+
-      |                     |
-      v                     v
-   Google Provider        Groq Provider
-          |                     |
-          v                     v
-     Google API             Groq API
+     │
+     ├── File Upload / Text Input
+     │          │
+     │          ▼
+     │   Document Parser
+     │          │
+     │          ▼
+     │   Meeting Notes Text
+     │          │
+     │          ▼
+     │   Model Router
+     │       /      \
+     │      /        \
+     ▼               ▼
+  Gemini            Groq
+     │               │
+     └───────┬───────┘
+             ▼
+       AI Analysis
 
-
-The provider abstraction allows adding new AI backends without changing application logic.
-
-Future integrations:
-
-- OpenRouter
-- Anthropic Claude
-- Azure OpenAI
-- Local LLMs
-
----
-
-# 🛠️ Tech Stack
-
-## Application
-
-- Python
-- Streamlit
-- python-dotenv
-
-## AI APIs
-
-- Google API
-- Groq API
-
-## Development
-
-- VS Code
-- Git
-- Python virtual environment
-
----
-
-# 📂 Project Structure
+Project Structure
 
 ai-delivery-assistant/
-├── app.py                     # Streamlit interface
-├── analyzer.py                # Prompt generation and analysis logic
-├── router.py                  # LLM provider routing
-├── config.py                  # Environment configuration
+│
+├── app.py
+├── analyzer.py
+├── config.py
+├── router.py
+├── document_parser.py
 │
 ├── providers/
-│   ├── init.py
-│   ├── google_provider.py     # Gemini integration
-│   └── groq_provider.py       # Groq integration
+│   ├── google_provider.py
+│   └── groq_provider.py
 │
 ├── requirements.txt
 ├── .env
-└── README.md
+└── .gitignore
 
 
+### Installation
 
----
-
-# 🚀 Installation
-
-## 1. Clone repository
-
-```bash
-git clone <repository-url>
-
+Clone the repository:
+git clone https://github.com/wladimirkarpicki/ai-delivery-assistant.git
 cd ai-delivery-assistant
 
-2. Create virtual environment
-
+Create a virtual environment:
 python -m venv venv
 
-Activate:
+Activate it on Windows PowerShell:
+venv\Scripts\Activate.ps1
 
-Windows PowerShell
-.\venv\Scripts\Activate.ps1
-
-3. Install dependencies
-
+Install dependencies:
 pip install -r requirements.txt
 
-Configuration
 
-Create .env file:
-GEMINI_API_KEY=your_gemini_api_key
+### Configuration
+
+Create a .env file in the project root:
+GOOGLE_API_KEY=your_google_api_key
 GROQ_API_KEY=your_groq_api_key
 
-Never commit .env to GitHub.
+Never commit .env or API keys to Git.
 
-▶️ Run Application
 
-Start Streamlit:
+### Run
+
+Start the application:
 python -m streamlit run app.py
 
-Open:
+Then open:
 http://localhost:8501
 
-💡 Usage
 
-Select AI provider:
+### Usage
 
-Google Gemini
-or
-Groq
-
-Select AI model.
-
-Paste meeting notes.
-
-Click Analyze.
-
-Review generated delivery insights.
+-Select an AI provider.
+-Select an available model.
+-Upload a meeting document or paste meeting notes.
+-Click Analyze.
+-Review the generated delivery analysis.
 
 
-Example
+### Technology Stack
+
+Python
+Streamlit
+Google Gemini API
+Groq API
+pypdf
+python-docx
 
 
-Input:
+### Project Status
 
-#Backend API migration is delayed because authentication service is not ready.
+🚧 Active development
 
-#Beta release moved from September 10 to September 24.
-
-#John will complete API integration by September 15.
-#Maria will prepare regression tests by September 18.
-
-
-Output:
-
-#Executive Summary
-
-#Project Phoenix is progressing with backend migration delayed
-#due to authentication dependencies.
-
-#Risks
-
-#- Third-party authentication dependency
-
-#Blockers
-
-#- Authentication service unavailable
-
-#Action Items
-
-#John:
-#Complete API integration
-#Deadline: September 15
-
-#Maria:
-#Prepare regression tests
-#Deadline: September 18
-
-🗺️ Roadmap
-
-Completed
-
-✅ Streamlit UI
-✅ Google integration
-✅ Groq integration
-✅ Dynamic model selection
-✅ Provider-based architecture  
-
-
-Planned
-
-Document Processing
--PDF upload
--DOCX support
--Meeting transcription
-
-Integrations
--Jira
--Azure DevOps
--Confluence
-
-AI Enhancements
--RAG knowledge base
--Project history analysis
--Custom PM templates
-
-🎯 Project Goals
-AI Delivery Assistant demonstrates:
-Practical AI integration
-LLM provider abstraction
-Software architecture design
-AI-assisted project management workflows
-
-
-License
-MIT License
-
-For GitHub, I would also add:
-
-.gitignore
-requirements.txt
-README.md
-LICENSE
-
-and **do not upload**:
-
-.env
-venv/
-pycache/
-
-After adding this:
-
-```bash
-git add README.md
-git commit -m "Add GitHub project documentation"
-git push origin feature/multi-model-support
+Planned improvements include additional document formats, improved document processing, and further delivery-management analysis capabilities.
