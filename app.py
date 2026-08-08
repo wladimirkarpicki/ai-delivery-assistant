@@ -6,6 +6,7 @@ from config import (
     GROQ_ALLOWED_MODELS,
     GEMINI_ALLOWED_MODELS
 )
+from document_parser import extract_text
 
 
 router = ModelRouter()
@@ -53,6 +54,7 @@ models = get_available_models(provider)
 
 # Filter models according to provider
 if provider == "groq":
+
     models = [
         model
         for model in models
@@ -60,6 +62,7 @@ if provider == "groq":
     ]
 
 elif provider == "google":
+
     models = [
         model
         for model in models
@@ -68,9 +71,11 @@ elif provider == "google":
 
 
 if not models:
+
     st.error(
         f"No supported models are currently available for {provider_name}."
     )
+
     st.stop()
 
 
@@ -85,9 +90,23 @@ model = st.selectbox(
 # Meeting notes input
 # -------------------------
 
+st.subheader("Meeting Notes")
+
+
+uploaded_file = st.file_uploader(
+    "Upload meeting notes",
+    type=["pdf", "docx", "txt", "md"],
+    help="Supported formats: PDF, DOCX, TXT, Markdown"
+)
+
+
+st.caption("Or paste meeting notes below.")
+
+
 meeting_notes = st.text_area(
-    "Paste meeting notes",
-    height=300
+    "Meeting notes",
+    height=300,
+    placeholder="Paste your meeting notes here..."
 )
 
 
@@ -97,24 +116,72 @@ meeting_notes = st.text_area(
 
 if st.button("Analyze"):
 
-    if not meeting_notes.strip():
+    text_to_analyze = None
 
-        st.warning(
-            "Please enter meeting notes first."
-        )
+    # -------------------------
+    # Uploaded file
+    # -------------------------
+
+    if uploaded_file is not None:
+
+        try:
+
+            text_to_analyze = extract_text(
+                uploaded_file
+            )
+
+            st.success(
+                f"Loaded: {uploaded_file.name}"
+            )
+
+        except ValueError as error:
+
+            st.error(str(error))
+
+            st.stop()
+
+
+    # -------------------------
+    # Pasted text
+    # -------------------------
+
+    elif meeting_notes.strip():
+
+        text_to_analyze = meeting_notes.strip()
+
+
+    # -------------------------
+    # No input
+    # -------------------------
 
     else:
 
-        with st.spinner("Analyzing..."):
-
-            result = analyze_document(
-                text=meeting_notes,
-                provider=provider,
-                model=model
-            )
-
-        st.success(
-            f"Generated using {provider_name}: {model}"
+        st.warning(
+            "Please upload a file or enter meeting notes."
         )
 
-        st.markdown(result)
+        st.stop()
+
+
+    # -------------------------
+    # Generate analysis
+    # -------------------------
+
+    with st.spinner("Analyzing..."):
+
+        result = analyze_document(
+            text=text_to_analyze,
+            provider=provider,
+            model=model
+        )
+
+
+    # -------------------------
+    # Display result
+    # -------------------------
+
+    st.success(
+        f"Generated using {provider_name}: {model}"
+    )
+
+    st.markdown(result)
