@@ -1,5 +1,6 @@
-from dotenv import load_dotenv
 import os
+
+from dotenv import load_dotenv
 from google import genai
 
 
@@ -17,7 +18,6 @@ class GoogleProvider:
             api_key=api_key.strip()
         )
 
-
     def generate(self, model, prompt):
 
         response = self.client.models.generate_content(
@@ -27,12 +27,12 @@ class GoogleProvider:
 
         return response.text
 
-
     def get_models(self):
 
         models = self.client.models.list()
 
         return [
-            model.name
+            model.name.removeprefix("models/")
             for model in models
+            if "generateContent" in model.supported_actions
         ]
