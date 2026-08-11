@@ -1,10 +1,6 @@
 from router import ModelRouter
 
 
-router = ModelRouter()
-
-
-
 def build_prompt(text):
     """
     Build prompt for meeting analysis.
@@ -58,7 +54,8 @@ Meeting Notes:
 def analyze_document(
         text,
         provider,
-        model
+        model,
+        router_instance=None,
 ):
     """
     Analyze meeting notes using selected AI provider.
@@ -74,6 +71,8 @@ def analyze_document(
 
     prompt = build_prompt(text)
 
+
+    router = router_instance or ModelRouter()
 
     result = router.generate(
         provider=provider,

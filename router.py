@@ -9,10 +9,20 @@ class ModelRouter:
 
     def __init__(self):
 
-        self.providers = {
-            "google": GoogleProvider(),
-            "groq": GroqProvider()
+        self.provider_classes = {
+            "google": GoogleProvider,
+            "groq": GroqProvider,
         }
+        self.providers = {}
+
+    def _get_provider(self, provider):
+        if provider not in self.provider_classes:
+            raise ValueError(f"Unsupported provider: {provider}")
+
+        if provider not in self.providers:
+            self.providers[provider] = self.provider_classes[provider]()
+
+        return self.providers[provider]
 
 
     def generate(
@@ -33,13 +43,7 @@ class ModelRouter:
             str: generated response
         """
 
-        if provider not in self.providers:
-            raise ValueError(
-                f"Unsupported provider: {provider}"
-            )
-
-
-        selected_provider = self.providers[provider]
+        selected_provider = self._get_provider(provider)
 
 
         return selected_provider.generate(
@@ -53,13 +57,7 @@ class ModelRouter:
         Return available models for provider.
         """
 
-        if provider not in self.providers:
-            raise ValueError(
-                f"Unsupported provider: {provider}"
-            )
-
-
-        selected_provider = self.providers[provider]
+        selected_provider = self._get_provider(provider)
 
 
         return selected_provider.get_models()
