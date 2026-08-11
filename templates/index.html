@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Delivery Assistant</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>AI Delivery Assistant</h1>
+      <p>Turn meeting notes into clear delivery insights.</p>
+    </header>
+    {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+    {% if success %}<div class="notice success">{{ success }}</div>{% endif %}
+    <form method="post" enctype="multipart/form-data">
+      <div class="fields">
+        <label>AI provider
+          <select name="provider" id="provider">
+            {% for label, value in providers.items() %}
+            <option value="{{ value }}" {% if value == provider %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>AI model
+          <select name="model" id="model" {% if not models %}disabled{% endif %}>
+            {% for model in models %}
+            <option value="{{ model }}" {% if model == selected_model %}selected{% endif %}>{{ model }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <label>Upload meeting notes <span>PDF, DOCX, TXT, or Markdown</span>
+        <input type="file" name="meeting_file" accept=".pdf,.docx,.txt,.md">
+      </label>
+      <p class="hint">Or paste meeting notes below.</p>
+      <label>Meeting notes
+        <textarea name="meeting_notes" rows="14" placeholder="Paste your meeting notes here...">{{ notes }}</textarea>
+      </label>
+      <button type="submit" {% if not models %}disabled{% endif %}>Analyze</button>
+    </form>
+    {% if result %}
+    <section class="result">
+      <h2>Delivery analysis</h2>
+      <pre>{{ result }}</pre>
+    </section>
+    {% endif %}
+  </main>
+  <script>
+    const provider = document.querySelector('#provider');
+    const model = document.querySelector('#model');
+    provider.addEventListener('change', async () => {
+      const response = await fetch(`/models/${provider.value}`);
+      const data = await response.json();
+      model.replaceChildren();
+      (data.models || []).forEach((name) => model.add(new Option(name, name)));
+      model.disabled = !data.models?.length;
+    });
+  </script>
+</body>
+</html>
