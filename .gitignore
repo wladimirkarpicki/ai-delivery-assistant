@@ -5,5 +5,6 @@ __init__.cpython-314.pyc
 google_provider.cpython-314.pyc
 groq_provider.cpython-314.pyc
 __pycache__/config.cpython-314.pyc
+__pycache__/
 python
 __pycache__/document_parser.cpython-314.pyc
