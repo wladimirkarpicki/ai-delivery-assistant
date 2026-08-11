@@ -1,4 +1,7 @@
 Flask
+Flask-SQLAlchemy
+Flask-Migrate
+psycopg[binary]
 python-dotenv
 google-genai
 groq
