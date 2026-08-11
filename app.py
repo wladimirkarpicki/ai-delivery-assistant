@@ -1,187 +1,106 @@
-import streamlit as st
+from flask import Flask, render_template, request
 
 from analyzer import analyze_document
-from router import ModelRouter
-from config import (
-    GROQ_ALLOWED_MODELS,
-    GEMINI_ALLOWED_MODELS
-)
+from config import GEMINI_ALLOWED_MODELS, GROQ_ALLOWED_MODELS
 from document_parser import extract_text
+from router import ModelRouter
 
 
-router = ModelRouter()
-
-
-st.set_page_config(
-    page_title="AI Delivery Assistant",
-    layout="wide"
-)
-
-
-st.title("AI Delivery Assistant")
-
-
-# -------------------------
-# Provider selection
-# -------------------------
-
-provider_options = {
+PROVIDER_OPTIONS = {
     "Google Gemini": "google",
-    "Groq": "groq"
+    "Groq": "groq",
+}
+
+ALLOWED_MODELS = {
+    "google": GEMINI_ALLOWED_MODELS,
+    "groq": GROQ_ALLOWED_MODELS,
 }
 
 
-provider_name = st.selectbox(
-    "AI Provider",
-    list(provider_options.keys()),
-    width=400
-)
-
-provider = provider_options[provider_name]
-
-
-# -------------------------
-# Model selection
-# -------------------------
-
-@st.cache_data(ttl=3600)
-def get_available_models(provider):
-    return router.get_models(provider)
-
-
-models = get_available_models(provider)
-
-
-# Filter models according to provider
-if provider == "groq":
-
-    models = [
+def get_available_models(router, provider):
+    """Discover provider models and retain only supported application models."""
+    return [
         model
-        for model in models
-        if model in GROQ_ALLOWED_MODELS
-    ]
-
-elif provider == "google":
-
-    models = [
-        model
-        for model in models
-        if model in GEMINI_ALLOWED_MODELS
+        for model in router.get_models(provider)
+        if model in ALLOWED_MODELS[provider]
     ]
 
 
-if not models:
+def create_app(router_instance=None):
+    app = Flask(__name__)
+    router = router_instance or ModelRouter()
 
-    st.error(
-        f"No supported models are currently available for {provider_name}."
-    )
+    @app.route("/", methods=["GET", "POST"])
+    def index():
+        provider = request.form.get("provider", "google")
+        if provider not in PROVIDER_OPTIONS.values():
+            provider = "google"
 
-    st.stop()
-
-
-model = st.selectbox(
-    "AI Model",
-    models,
-    width=400
-)
-
-
-# -------------------------
-# Meeting notes input
-# -------------------------
-
-st.subheader("Meeting Notes")
-
-
-uploaded_file = st.file_uploader(
-    "Upload meeting notes",
-    type=["pdf", "docx", "txt", "md"],
-    help="Supported formats: PDF, DOCX, TXT, Markdown"
-)
-
-
-st.caption("Or paste meeting notes below.")
-
-
-meeting_notes = st.text_area(
-    "Meeting notes",
-    height=300,
-    placeholder="Paste your meeting notes here..."
-)
-
-
-# -------------------------
-# Analysis
-# -------------------------
-
-if st.button("Analyze"):
-
-    text_to_analyze = None
-
-    # -------------------------
-    # Uploaded file
-    # -------------------------
-
-    if uploaded_file is not None:
+        notes = request.form.get("meeting_notes", "")
+        result = None
+        error = None
+        success = None
 
         try:
+            models = get_available_models(router, provider)
+        except (ValueError, RuntimeError) as exception:
+            models = []
+            error = str(exception)
 
-            text_to_analyze = extract_text(
-                uploaded_file
-            )
+        selected_model = request.form.get("model")
+        if selected_model not in models:
+            selected_model = models[0] if models else None
 
-            st.success(
-                f"Loaded: {uploaded_file.name}"
-            )
+        if request.method == "POST" and not error:
+            uploaded_file = request.files.get("meeting_file")
+            try:
+                if uploaded_file and uploaded_file.filename:
+                    text_to_analyze = extract_text(uploaded_file)
+                    success = f"Loaded: {uploaded_file.filename}"
+                elif notes.strip():
+                    text_to_analyze = notes.strip()
+                else:
+                    raise ValueError("Please upload a file or enter meeting notes.")
 
-        except ValueError as error:
+                if not selected_model:
+                    raise ValueError("No supported models are currently available.")
 
-            st.error(str(error))
+                result = analyze_document(
+                    text=text_to_analyze,
+                    provider=provider,
+                    model=selected_model,
+                    router_instance=router,
+                )
+                success = f"Generated using {provider}: {selected_model}"
+            except (ValueError, RuntimeError) as exception:
+                error = str(exception)
 
-            st.stop()
-
-
-    # -------------------------
-    # Pasted text
-    # -------------------------
-
-    elif meeting_notes.strip():
-
-        text_to_analyze = meeting_notes.strip()
-
-
-    # -------------------------
-    # No input
-    # -------------------------
-
-    else:
-
-        st.warning(
-            "Please upload a file or enter meeting notes."
-        )
-
-        st.stop()
-
-
-    # -------------------------
-    # Generate analysis
-    # -------------------------
-
-    with st.spinner("Analyzing..."):
-
-        result = analyze_document(
-            text=text_to_analyze,
+        return render_template(
+            "index.html",
             provider=provider,
-            model=model
+            providers=PROVIDER_OPTIONS,
+            models=models,
+            selected_model=selected_model,
+            notes=notes,
+            result=result,
+            error=error,
+            success=success,
         )
 
+    @app.get("/models/<provider>")
+    def models(provider):
+        if provider not in PROVIDER_OPTIONS.values():
+            return {"error": "Unsupported provider."}, 404
+        try:
+            return {"models": get_available_models(router, provider)}
+        except (ValueError, RuntimeError) as exception:
+            return {"error": str(exception)}, 400
 
-    # -------------------------
-    # Display result
-    # -------------------------
+    return app
 
-    st.success(
-        f"Generated using {provider_name}: {model}"
-    )
 
-    st.markdown(result)
+app = create_app()
+
+
+if __name__ == "__main__":
+    app.run(debug=True)

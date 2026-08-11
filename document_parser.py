@@ -14,7 +14,7 @@ SUPPORTED_EXTENSIONS = {
 
 def extract_text(uploaded_file):
     """
-    Extract text from a Streamlit UploadedFile.
+    Extract text from a web upload object.
 
     Supported formats:
         PDF, DOCX, TXT, MD
@@ -26,7 +26,8 @@ def extract_text(uploaded_file):
         ValueError: If the file format is unsupported or no text is found.
     """
 
-    extension = Path(uploaded_file.name).suffix.lower()
+    filename = getattr(uploaded_file, "filename", None) or uploaded_file.name
+    extension = Path(filename).suffix.lower()
 
     if extension not in SUPPORTED_EXTENSIONS:
         raise ValueError(
@@ -88,7 +89,10 @@ def _extract_docx(uploaded_file):
 
 
 def _extract_text_file(uploaded_file):
-    data = uploaded_file.getvalue()
+    if hasattr(uploaded_file, "getvalue"):
+        data = uploaded_file.getvalue()
+    else:
+        data = uploaded_file.read()
 
     try:
         result = data.decode("utf-8").strip()
