@@ -1,54 +1,83 @@
-import io
+import json
 import unittest
 
 from app import create_app
+from database import db
+from models import ActionItem, HistoryEvent, Meeting, Project, Risk
 
 
 class FakeRouter:
+    def __init__(self):
+        self.responses = []
+
     def get_models(self, provider):
-        return {
-            "google": ["gemini-3.6-flash", "unsupported-model"],
-            "groq": ["llama-3.3-70b-versatile"],
-        }[provider]
+        return {"google": ["gemini-3.6-flash", "unsupported-model"], "groq": ["llama-3.3-70b-versatile"]}[provider]
 
     def generate(self, provider, model, prompt):
-        return f"Analysis from {provider}:{model}"
+        return json.dumps(self.responses.pop(0))
 
 
 class FlaskAppTests(unittest.TestCase):
     def setUp(self):
-        app = create_app(FakeRouter())
-        app.config.update(TESTING=True)
-        self.client = app.test_client()
+        self.router = FakeRouter()
+        self.app = create_app(self.router, "sqlite://")
+        self.app.config.update(TESTING=True)
+        with self.app.app_context():
+            db.create_all()
+        self.client = self.app.test_client()
 
-    def test_home_page_lists_filtered_models(self):
-        response = self.client.get("/")
+    def tearDown(self):
+        with self.app.app_context():
+            db.session.remove()
+            db.drop_all()
+
+    def create_project(self):
+        self.client.post("/projects", data={"name": "Phoenix", "description": "Release project"})
+        with self.app.app_context():
+            return db.session.scalar(db.select(Project).filter_by(name="Phoenix")).id
+
+    def test_projects_page_and_filtered_models(self):
+        response = self.client.get("/projects")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"gemini-3.6-flash", response.data)
-        self.assertNotIn(b"unsupported-model", response.data)
+        self.assertIn(b"New project", response.data)
+        response = self.client.get("/models/google")
+        self.assertEqual(response.get_json()["models"], ["gemini-3.6-flash"])
 
-    def test_pasted_notes_are_analyzed(self):
-        response = self.client.post(
-            "/",
-            data={
-                "provider": "groq",
-                "model": "llama-3.3-70b-versatile",
-                "meeting_notes": "Ship the release on Friday.",
+    def test_meetings_preserve_input_and_history_while_resolving_items(self):
+        project_id = self.create_project()
+        self.router.responses = [
+            {
+                "executive_summary": "QA is constrained.", "project_status": "at_risk", "progress_summary": "Testing is delayed.",
+                "completed_items": [], "in_progress_items": ["Regression testing"],
+                "risks": [{"title": "QA capacity", "description": "One tester", "impact": "high", "mitigation": "Borrow support", "status": "open"}],
+                "blockers": [], "decisions": [],
+                "action_items": [{"title": "Find QA support", "details": "Ask support team", "owner": "Ava", "due_date": "2026-08-15", "status": "open"}],
             },
-        )
-        self.assertIn(b"Analysis from groq:llama-3.3-70b-versatile", response.data)
+            {
+                "executive_summary": "QA support confirmed.", "project_status": "on_track", "progress_summary": "Testing is staffed.",
+                "completed_items": ["Find QA support"], "in_progress_items": ["Regression testing"],
+                "risks": [{"title": "QA capacity", "description": "Support assigned", "impact": "low", "mitigation": "Monitor", "status": "resolved"}],
+                "blockers": [], "decisions": [],
+                "action_items": [{"title": "Find QA support", "details": "Support assigned", "owner": "Ava", "due_date": "2026-08-15", "status": "completed"}],
+            },
+        ]
+        for title, notes in [("Weekly 1", "QA risk discussed"), ("Weekly 2", "QA support confirmed")]:
+            response = self.client.post(f"/projects/{project_id}/meetings/new", data={"title": title, "provider": "groq", "model": "llama-3.3-70b-versatile", "meeting_notes": notes})
+            self.assertEqual(response.status_code, 302)
 
-    def test_text_upload_is_analyzed(self):
-        response = self.client.post(
-            "/",
-            data={
-                "provider": "google",
-                "model": "gemini-3.6-flash",
-                "meeting_file": (io.BytesIO(b"Team meeting notes"), "notes.txt"),
-            },
-            content_type="multipart/form-data",
-        )
-        self.assertIn(b"Analysis from google:gemini-3.6-flash", response.data)
+        with self.app.app_context():
+            self.assertEqual(Meeting.query.count(), 2)
+            self.assertEqual(Meeting.query.first().original_text, "QA risk discussed")
+            risk = Risk.query.one()
+            action = ActionItem.query.one()
+            self.assertEqual(risk.status, "resolved")
+            self.assertIsNotNone(risk.resolved_at)
+            self.assertEqual(action.status, "completed")
+            self.assertIsNotNone(action.completed_at)
+            self.assertGreaterEqual(HistoryEvent.query.count(), 5)
+
+        self.assertIn(b"QA risk discussed", self.client.get("/meetings/1").data)
+        self.assertIn(b"Resolved risk: QA capacity", self.client.get(f"/projects/{project_id}/history").data)
 
 
 if __name__ == "__main__":
