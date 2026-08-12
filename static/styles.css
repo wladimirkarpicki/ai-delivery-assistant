@@ -18,14 +18,7 @@ button:disabled, select:disabled { opacity: .55; cursor: not-allowed; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; }
 .brand, .button { color: #2459d6; font-weight: 700; text-decoration: none; }
 .brand { font-size: 30px; }
-.button {
-    background: #2459d6;
-    color: #fff;
-    padding: 10px 16px;
-    border-radius: 6px;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
+.button { background: #2459d6; color: #fff; padding: 10px 16px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
 .page-heading { display: flex; justify-content: space-between; gap: 16px; align-items: start; }
 .subnav { display: flex; gap: 18px; margin-top: 16px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
