@@ -1,1 +1,108 @@
-{% extends "base.html" %}{% block content %}<div class="page-heading"><div><a href="{{ url_for('projects') }}">← Projects</a><h1>{{ project.name }}</h1><p>{{ project.description }}</p></div><a class="button" href="{{ url_for('add_meeting', project_id=project.id) }}">Add meeting</a></div><nav class="subnav"><a href="{{ url_for('project_meetings', project_id=project.id) }}">Meetings ({{ meeting_count }})</a><a href="{{ url_for('project_history', project_id=project.id) }}">History</a></nav><section class="status-card"><strong>{{ (project.state.delivery_status if project.state else 'unknown')|replace('_', ' ')|title }}</strong><p>{{ project.state.progress_summary if project.state else 'No meeting analysis yet.' }}</p></section><div class="cards"><section class="panel"><h2>Open risks</h2>{% for item in risks %}<article><strong>{{ item.title }}</strong><p>{{ item.description }}</p><small>Impact: {{ item.impact }}{% if item.mitigation %} · Mitigation: {{ item.mitigation }}{% endif %}</small></article>{% else %}<p>None.</p>{% endfor %}</section><section class="panel"><h2>Open blockers</h2>{% for item in blockers %}<article><strong>{{ item.title }}</strong><p>{{ item.description }}</p></article>{% else %}<p>None.</p>{% endfor %}</section><section class="panel"><h2>Open actions</h2>{% for item in actions %}<article><strong>{{ item.title }}</strong><p>{{ item.owner or 'Unassigned' }}{% if item.due_date %} · due {{ item.due_date }}{% endif %}</p></article>{% else %}<p>None.</p>{% endfor %}</section></div>{% endblock %}
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="page-heading">
+    <div>
+        <a href="{{ url_for('projects') }}">← Projects</a>
+
+        <h1>{{ project.name }}</h1>
+
+        <p>{{ project.description }}</p>
+    </div>
+
+    <a class="button" href="{{ url_for('add_meeting', project_id=project.id) }}">
+        Add meeting
+    </a>
+</div>
+
+
+<nav class="subnav">
+    <a href="{{ url_for('project_meetings', project_id=project.id) }}">
+        Meetings ({{ meeting_count }})
+    </a>
+
+    <a href="{{ url_for('project_history', project_id=project.id) }}">
+        History
+    </a>
+</nav>
+
+
+<section class="status-card">
+    <strong>
+        {{ (project.state.delivery_status if project.state else 'unknown')
+            | replace('_', ' ')
+            | title }}
+    </strong>
+
+    <p>
+        {{ project.state.progress_summary
+            if project.state
+            else 'No meeting analysis yet.' }}
+    </p>
+</section>
+
+
+<div class="cards">
+
+    <section class="panel">
+        <h2>Open risks</h2>
+
+        {% for item in risks %}
+            <article>
+                <strong>{{ item.title }}</strong>
+
+                <p>{{ item.description }}</p>
+
+                <small>
+                    Impact: {{ item.impact }}
+
+                    {% if item.mitigation %}
+                        · Mitigation: {{ item.mitigation }}
+                    {% endif %}
+                </small>
+            </article>
+        {% else %}
+            <p>None.</p>
+        {% endfor %}
+    </section>
+
+
+    <section class="panel">
+        <h2>Open blockers</h2>
+
+        {% for item in blockers %}
+            <article>
+                <strong>{{ item.title }}</strong>
+
+                <p>{{ item.description }}</p>
+            </article>
+        {% else %}
+            <p>None.</p>
+        {% endfor %}
+    </section>
+
+
+    <section class="panel">
+        <h2>Open actions</h2>
+
+        {% for item in actions %}
+            <article>
+                <strong>{{ item.title }}</strong>
+
+                <p>
+                    {{ item.owner or 'Unassigned' }}
+
+                    {% if item.due_date %}
+                        · due {{ item.due_date }}
+                    {% endif %}
+                </p>
+            </article>
+        {% else %}
+            <p>None.</p>
+        {% endfor %}
+    </section>
+
+</div>
+
+{% endblock %}
