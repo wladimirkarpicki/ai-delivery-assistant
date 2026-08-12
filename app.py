@@ -6,8 +6,10 @@ from analyzer import analyze_document, parse_analysis
 from config import GEMINI_ALLOWED_MODELS, GROQ_ALLOWED_MODELS
 from database import configure_database, db
 from document_parser import extract_text
-from models import ActionItem, Blocker, HistoryEvent, Meeting, Project, Risk
-from project_memory import apply_meeting_analysis
+from memory_consolidator import MemoryConsolidator
+from models import ActionItem, Blocker, Decision, HistoryEvent, Meeting, Project, Risk
+from project_memory import apply_consolidation_plan, apply_meeting_analysis
+from router import ModelRouter
 from router import ModelRouter
 
 PROVIDER_OPTIONS = {"Google Gemini": "google", "Groq": "groq"}
@@ -16,6 +18,57 @@ ALLOWED_MODELS = {"google": GEMINI_ALLOWED_MODELS, "groq": GROQ_ALLOWED_MODELS}
 
 def get_available_models(router, provider):
     return [model for model in router.get_models(provider) if model in ALLOWED_MODELS[provider]]
+
+
+def get_project_memory(project_id):
+    """Extract the current project memory from the database."""
+    memory = {
+        "risks": [],
+        "blockers": [],
+        "action_items": [],
+        "decisions": []
+    }
+    
+    # Get open risks
+    for risk in Risk.query.filter_by(project_id=project_id, status="open").all():
+        memory["risks"].append({
+            "id": risk.id,
+            "title": risk.title,
+            "description": risk.description,
+            "impact": risk.impact,
+            "mitigation": risk.mitigation,
+            "status": risk.status
+        })
+    
+    # Get open blockers
+    for blocker in Blocker.query.filter_by(project_id=project_id, status="open").all():
+        memory["blockers"].append({
+            "id": blocker.id,
+            "title": blocker.title,
+            "description": blocker.description,
+            "status": blocker.status
+        })
+    
+    # Get open action items
+    for action in ActionItem.query.filter_by(project_id=project_id, status="open").all():
+        memory["action_items"].append({
+            "id": action.id,
+            "title": action.title,
+            "details": action.details,
+            "owner": action.owner,
+            "due_date": action.due_date.isoformat() if action.due_date else None,
+            "status": action.status
+        })
+    
+    # Get decisions
+    for decision in Decision.query.filter_by(project_id=project_id).all():
+        memory["decisions"].append({
+            "id": decision.id,
+            "title": decision.title,
+            "details": decision.details
+        })
+    
+    return memory
 
 
 def create_app(router_instance=None, database_url=None):
@@ -102,7 +155,23 @@ def create_app(router_instance=None, database_url=None):
                 meeting = Meeting(project_id=project.id, title=request.form.get("title", "").strip() or "Untitled meeting", source_filename=source_filename, original_text=original_text, analysis_text=analysis_text, analysis_json=analysis_json, provider=provider, model=selected_model)
                 db.session.add(meeting)
                 db.session.flush()
-                apply_meeting_analysis(project, meeting, analysis_json)
+                
+                # Use AI-driven consolidation to avoid duplicates
+                try:
+                    existing_memory = get_project_memory(project.id)
+                    consolidator = MemoryConsolidator(router)
+                    consolidation_plan = consolidator.consolidate(
+                        existing_memory=existing_memory,
+                        new_analysis=analysis_json,
+                        provider=provider,
+                        model=selected_model
+                    )
+                    apply_consolidation_plan(project, meeting, consolidation_plan)
+                except Exception as consolidation_error:
+                    # Fallback to traditional analysis if consolidation fails
+                    flash(f"Note: Consolidation encountered an issue ({str(consolidation_error)}), using standard analysis.", "warning")
+                    apply_meeting_analysis(project, meeting, analysis_json)
+                
                 db.session.commit()
                 flash("Meeting saved and project memory updated.", "success")
                 return redirect(url_for("meeting_detail", meeting_id=meeting.id))
