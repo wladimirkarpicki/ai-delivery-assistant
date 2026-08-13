@@ -1,1 +1,121 @@
-{% extends "base.html" %}{% block content %}<a href="{{ url_for('project_overview', project_id=project.id) }}">← {{ project.name }}</a><h1>Add meeting</h1>{% if error %}<div class="notice error">{{ error }}</div>{% endif %}<form class="panel" method="post" enctype="multipart/form-data"><label>Meeting title<input name="title" maxlength="250" placeholder="Weekly delivery meeting"></label><div class="fields"><label>AI provider<select name="provider" id="provider">{% for label, value in providers.items() %}<option value="{{ value }}" {% if value == provider %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><label>AI model<select name="model" id="model" {% if not models %}disabled{% endif %}>{% for model in models %}<option value="{{ model }}" {% if model == selected_model %}selected{% endif %}>{{ model }}</option>{% endfor %}</select></label></div><label>Upload notes <span>PDF, DOCX, TXT, or Markdown</span><input type="file" name="meeting_file" accept=".pdf,.docx,.txt,.md"></label><p class="hint">Or paste notes below.</p><label>Meeting notes<textarea name="meeting_notes" rows="14"></textarea></label><button type="submit" {% if not models %}disabled{% endif %}>Analyze and save</button></form><script>const provider=document.querySelector('#provider'),model=document.querySelector('#model');provider.addEventListener('change',async()=>{const response=await fetch(`/models/${provider.value}`),data=await response.json();model.replaceChildren();(data.models||[]).forEach(name=>model.add(new Option(name,name)));model.disabled=!data.models?.length;});</script>{% endblock %}
+{% extends "base.html" %}
+
+{% block content %}
+
+<a href="{{ url_for('project_overview', project_id=project.id) }}">
+    ← {{ project.name }}
+</a>
+
+<h1>Add meeting</h1>
+
+{% if error %}
+    <div class="notice error">
+        {{ error }}
+    </div>
+{% endif %}
+
+<form
+    class="panel"
+    method="post"
+    enctype="multipart/form-data"
+>
+    <label>
+        Meeting title
+
+        <input
+            name="title"
+            maxlength="250"
+            placeholder="Weekly delivery meeting"
+        >
+    </label>
+
+    <div class="fields">
+
+        <label>
+            AI provider
+
+            <select name="provider" id="provider">
+                {% for label, value in providers.items() %}
+                    <option
+                        value="{{ value }}"
+                        {% if value == provider %}selected{% endif %}
+                    >
+                        {{ label }}
+                    </option>
+                {% endfor %}
+            </select>
+        </label>
+
+        <label>
+            AI model
+
+            <select
+                name="model"
+                id="model"
+                {% if not models %}disabled{% endif %}
+            >
+                {% for model in models %}
+                    <option
+                        value="{{ model }}"
+                        {% if model == selected_model %}selected{% endif %}
+                    >
+                        {{ model }}
+                    </option>
+                {% endfor %}
+            </select>
+        </label>
+
+    </div>
+
+    <label>
+        Upload notes
+        <span>PDF, DOCX, TXT, or Markdown</span>
+
+        <input
+            type="file"
+            name="meeting_file"
+            accept=".pdf,.docx,.txt,.md"
+        >
+    </label>
+
+    <p class="hint">
+        Or paste notes below.
+    </p>
+
+    <label>
+        Meeting notes
+
+        <textarea
+            name="meeting_notes"
+            rows="14"
+        ></textarea>
+    </label>
+
+    <button
+        type="submit"
+        {% if not models %}disabled{% endif %}
+    >
+        Analyze and save
+    </button>
+</form>
+
+
+<script>
+    const provider = document.querySelector("#provider");
+    const model = document.querySelector("#model");
+
+    provider.addEventListener("change", async () => {
+        const response = await fetch(`/models/${provider.value}`);
+        const data = await response.json();
+
+        model.replaceChildren();
+
+        (data.models || []).forEach(name => {
+            model.add(new Option(name, name));
+        });
+
+        model.disabled = !data.models?.length;
+    });
+</script>
+
+{% endblock %}
