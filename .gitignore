@@ -7,3 +7,11 @@ groq_provider.cpython-314.pyc
 __pycache__/config.cpython-314.pyc
 python
 __pycache__/document_parser.cpython-314.pyc
+tests/__pycache__/test_app.cpython-314.pyc
+__pycache__/app.cpython-314.pyc
+__pycache__/database.cpython-314.pyc
+__pycache__/memory_consolidator.cpython-314.pyc
+__pycache__/models.cpython-314.pyc
+__pycache__/project_memory.cpython-314.pyc
+migrations/__pycache__/env.cpython-314.pyc
+migrations/versions/__pycache__/8c211c5dcd45_create_project_memory_schema.cpython-314.pyc
