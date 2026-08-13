@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="page-heading">
+
+    <div>
+        <a href="{{ url_for('project_overview', project_id=project.id) }}">
+            ← {{ project.name }}
+        </a>
+
+        <h1>Meetings</h1>
+    </div>
+
+    <a
+        class="button"
+        href="{{ url_for('add_meeting', project_id=project.id) }}"
+    >
+        Add meeting
+    </a>
+
+</div>
+
+
+<section class="panel">
+
+    <ul class="project-list">
+
+        {% for meeting in meetings %}
+
+            <li>
+                <a href="{{ url_for('meeting_detail', meeting_id=meeting.id) }}">
+                    {{ meeting.title }}
+                </a>
+
+                <span>
+                    {{ meeting.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    ·
+                    {{ meeting.provider }} / {{ meeting.model }}
+                </span>
+            </li>
+
+        {% else %}
+
+            <li>No meetings stored yet.</li>
+
+        {% endfor %}
+
+    </ul>
+
+</section>
+
+{% endblock %}
