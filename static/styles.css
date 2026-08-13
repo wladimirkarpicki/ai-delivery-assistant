@@ -10,7 +10,7 @@ label { display: grid; gap: 8px; font-weight: 600; margin-bottom: 18px; }
 label span { font-size: .85rem; font-weight: 400; }
 select, input, textarea, button { font: inherit; padding: 10px; border: 1px solid #c8d0df; border-radius: 6px; }
 textarea { resize: vertical; }
-button { background: #2459d6; color: white; border: 0; cursor: pointer; font-weight: 600; }
+button { background: #2459d6; color: white; border: 0; cursor: pointer; font-weight: 600; white-space: nowrap; }
 button:disabled, select:disabled { opacity: .55; cursor: not-allowed; }
 .notice { margin-top: 20px; padding: 12px; border-radius: 6px; }
 .success { background: #e7f7ed; color: #176332; }
