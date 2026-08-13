@@ -1,1 +1,66 @@
-{% extends "base.html" %}{% block content %}<h1>Projects</h1><section class="panel"><h2>New project</h2><form method="post"><label>Name<input name="name" required maxlength="200"></label><label>Description<textarea name="description" rows="3"></textarea></label><button>Create project</button></form></section><section class="panel"><h2>Your projects</h2>{% if projects %}<ul class="project-list">{% for project in projects %}<li><a href="{{ url_for('project_overview', project_id=project.id) }}">{{ project.name }}</a><span>{{ project.description or "No description" }}</span></li>{% endfor %}</ul>{% else %}<p>No projects yet. Create one to start storing meetings.</p>{% endif %}</section>{% endblock %}
+{% extends "base.html" %}
+
+{% block content %}
+
+<h1>Projects</h1>
+
+<section class="panel">
+    <h2>New project</h2>
+
+    <form method="post">
+        <label>
+            Name
+            <input
+                name="name"
+                required
+                maxlength="200"
+            >
+        </label>
+
+        <label>
+            Description
+            <textarea
+                name="description"
+                rows="3"
+            ></textarea>
+        </label>
+
+        <button>Create project</button>
+    </form>
+</section>
+
+
+<section class="panel">
+    <h2>Your projects</h2>
+
+    {% if projects %}
+
+        <ul class="project-list">
+
+            {% for project in projects %}
+
+                <li>
+                    <a href="{{ url_for('project_overview', project_id=project.id) }}">
+                        {{ project.name }}
+                    </a>
+
+                    <span>
+                        {{ project.description or "No description" }}
+                    </span>
+                </li>
+
+            {% endfor %}
+
+        </ul>
+
+    {% else %}
+
+        <p>
+            No projects yet. Create one to start storing meetings.
+        </p>
+
+    {% endif %}
+
+</section>
+
+{% endblock %}
