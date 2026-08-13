@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<a href="{{ url_for('project_overview', project_id=meeting.project_id) }}">
+    ← {{ meeting.project.name }}
+</a>
+
+<h1>{{ meeting.title }}</h1>
+
+<p>
+    {{ meeting.created_at.strftime('%Y-%m-%d %H:%M') }}
+    ·
+    {{ meeting.provider }} / {{ meeting.model }}
+
+    {% if meeting.source_filename %}
+        · {{ meeting.source_filename }}
+    {% endif %}
+</p>
+
+
+<div class="cards">
+
+    <section class="panel">
+        <h2>Original input</h2>
+
+        <pre>{{ meeting.original_text }}</pre>
+    </section>
+
+</div>
+
+
+<section class="panel">
+
+    <h2>Changes from this meeting</h2>
+
+    <ul class="timeline">
+
+        {% for event in events %}
+
+            <li>
+                <strong>
+                    {{ event.summary }}
+                </strong>
+            </li>
+
+        {% else %}
+
+            <p>No changes extracted.</p>
+
+        {% endfor %}
+
+    </ul>
+
+</section>
+
+{% endblock %}
