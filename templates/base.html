@@ -23,20 +23,19 @@
 
 <body>
 
+    <header class="app-header">
+        <div class="app-header__inner">
+            <a class="brand" href="{{ url_for('projects') }}">AI Delivery Assistant</a>
+            <nav class="app-nav" aria-label="Primary navigation">
+                <a href="{{ url_for('projects') }}">Projects</a>
+            </nav>
+            <button class="command-trigger" type="button" data-command-open aria-haspopup="dialog" aria-controls="command-palette">
+                Find <kbd>Ctrl K</kbd>
+            </button>
+        </div>
+    </header>
+
     <main class="container">
-
-        <header>
-            <a
-                class="brand"
-                href="{{ url_for('projects') }}"
-            >
-                AI Delivery Assistant
-            </a>
-
-            <p>
-                Auditable delivery memory from every meeting.
-            </p>
-        </header>
 
 
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -54,6 +53,30 @@
         {% endblock %}
 
     </main>
+
+    <footer class="app-footer">
+        <div>AI Delivery Assistant</div>
+        <div>Auditable delivery memory from every meeting.</div>
+    </footer>
+
+    <dialog class="command-palette" id="command-palette" aria-labelledby="command-title">
+        <div class="command-palette__head">
+            <strong id="command-title">Find your next view</strong>
+            <button class="icon-button" type="button" data-command-close aria-label="Close">×</button>
+        </div>
+        <a href="{{ url_for('projects') }}">Projects <span>Open the project list</span></a>
+    </dialog>
+    <script>
+      (() => {
+        const dialog = document.querySelector('#command-palette');
+        const open = () => dialog.showModal();
+        document.querySelectorAll('[data-command-open]').forEach(el => el.addEventListener('click', open));
+        document.querySelectorAll('[data-command-close]').forEach(el => el.addEventListener('click', () => dialog.close()));
+        document.addEventListener('keydown', event => {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
+        });
+      })();
+    </script>
 
 </body>
 

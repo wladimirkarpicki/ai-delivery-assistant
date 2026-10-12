@@ -1,17 +1,13 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI Delivery Assistant</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-</head>
-<body>
-  <main class="container">
-    <header>
-      <h1>AI Delivery Assistant</h1>
-      <p>Turn meeting notes into clear delivery insights.</p>
-    </header>
+{% extends "base.html" %}
+
+{% block content %}
+    <div class="page-heading">
+      <div>
+        <span class="eyebrow">Analysis intake</span>
+        <h1>Turn meeting notes into delivery evidence.</h1>
+        <p>Choose a model, add the source notes, and review the extracted delivery analysis.</p>
+      </div>
+    </div>
     {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
     {% if success %}<div class="notice success">{{ success }}</div>{% endif %}
     <form method="post" enctype="multipart/form-data">
@@ -46,7 +42,6 @@
       <pre>{{ result }}</pre>
     </section>
     {% endif %}
-  </main>
   <script>
     const provider = document.querySelector('#provider');
     const model = document.querySelector('#model');
@@ -58,5 +53,4 @@
       model.disabled = !data.models?.length;
     });
   </script>
-</body>
-</html>
+{% endblock %}
