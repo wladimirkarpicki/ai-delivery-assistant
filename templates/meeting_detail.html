@@ -2,13 +2,12 @@
 
 {% block content %}
 
-<a href="{{ url_for('project_overview', project_id=meeting.project_id) }}">
-    ← {{ meeting.project.name }}
-</a>
-
+<article class="record-page">
+<a href="{{ url_for('project_overview', project_id=meeting.project_id) }}">← {{ meeting.project.name }}</a>
+<span class="eyebrow">Meeting record</span>
 <h1>{{ meeting.title }}</h1>
 
-<p>
+<p class="record-meta">
     {{ meeting.created_at.strftime('%Y-%m-%d %H:%M') }}
     ·
     {{ meeting.provider }} / {{ meeting.model }}
@@ -19,18 +18,14 @@
 </p>
 
 
-<div class="cards">
-
-    <section class="panel">
+    <section class="workspace-section">
         <h2>Original input</h2>
 
         <pre>{{ meeting.original_text }}</pre>
     </section>
 
-</div>
 
-
-<section class="panel">
+<section class="workspace-section">
 
     <h2>Changes from this meeting</h2>
 
@@ -53,5 +48,6 @@
     </ul>
 
 </section>
+</article>
 
 {% endblock %}

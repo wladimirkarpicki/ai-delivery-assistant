@@ -2,10 +2,9 @@
 
 {% block content %}
 
-<a href="{{ url_for('project_overview', project_id=project.id) }}">
-    ← {{ project.name }}
-</a>
-
+<article class="record-page">
+<a href="{{ url_for('project_overview', project_id=project.id) }}">← {{ project.name }}</a>
+<span class="eyebrow">Evidence trail</span>
 <h1>Project history</h1>
 
 <section class="panel">
@@ -40,5 +39,6 @@
     </ul>
 
 </section>
+</article>
 
 {% endblock %}
