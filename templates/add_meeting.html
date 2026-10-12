@@ -2,11 +2,14 @@
 
 {% block content %}
 
-<a href="{{ url_for('project_overview', project_id=project.id) }}">
-    ← {{ project.name }}
-</a>
-
-<h1>Add meeting</h1>
+<div class="page-heading">
+    <div>
+        <a href="{{ url_for('project_overview', project_id=project.id) }}">← {{ project.name }}</a>
+        <span class="eyebrow">New evidence</span>
+        <h1>Add meeting</h1>
+        <p>Upload or paste the source record. Analysis stays attached to this project.</p>
+    </div>
+</div>
 
 {% if error %}
     <div class="notice error">
@@ -15,7 +18,6 @@
 {% endif %}
 
 <form
-    class="panel"
     method="post"
     enctype="multipart/form-data"
 >

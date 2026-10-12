@@ -5,7 +5,7 @@
 <div class="page-heading">
     <div>
         <a href="{{ url_for('projects') }}">← Projects</a>
-
+        <span class="eyebrow">Project workbench</span>
         <h1>{{ project.name }}</h1>
 
         <p>{{ project.description }}</p>
@@ -43,7 +43,7 @@
 </section>
 
 
-<div class="cards">
+<div class="cards" aria-label="Open delivery work">
 
     <section class="panel">
         <h2>Open risks</h2>
