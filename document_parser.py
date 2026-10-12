@@ -10,6 +10,7 @@ SUPPORTED_EXTENSIONS = {
     ".txt",
     ".md",
 }
+MAX_FILE_SIZE = 20 * 1024 * 1024
 
 
 def extract_text(uploaded_file):
@@ -33,6 +34,14 @@ def extract_text(uploaded_file):
         raise ValueError(
             f"Unsupported file format: {extension}"
         )
+
+    # Basic size guard (depends on Flask MAX_CONTENT_LENGTH as well)
+    if hasattr(uploaded_file, "seek") and hasattr(uploaded_file, "tell"):
+        uploaded_file.seek(0, 2)  # Seek to end
+        size = uploaded_file.tell()
+        uploaded_file.seek(0)  # Reset
+        if size > MAX_FILE_SIZE:
+            raise ValueError("File exceeds maximum allowed size (20 MB).")
 
     if extension == ".pdf":
         return _extract_pdf(uploaded_file)

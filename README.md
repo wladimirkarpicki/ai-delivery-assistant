@@ -10,7 +10,9 @@ The project is designed around a practical delivery-management problem: **the sa
 
 - AI analysis of project meeting notes
 - Google Gemini and Groq provider support
-- Dynamic model discovery filtered to the supported-model configuration
+- AI provider retry (3 attempts with exponential backoff) via `tenacity`
+- Dynamic model discovery from live provider APIs (no hardcoded model list)
+- Environment-based API key configuration (centralized loader)
 - PDF, DOCX, TXT, and Markdown uploads
 - Pasted meeting notes
 - Structured analysis of:
@@ -116,20 +118,14 @@ A deterministic/semantic candidate-matching layer using normalization, fuzzy mat
 
 ## Supported models
 
-The application discovers models from each provider API and exposes only models configured in `config.py`.
+The application discovers available models dynamically from each provider API (`router.get_models()`). No hardcoded model list is used; supported models are fetched live from Google Gemini and Groq endpoints.
 
-### Google Gemini
+### Dynamic model discovery
 
-- `gemini-3.6-flash`
-- `gemini-3.5-flash`
-- `gemma-4-31b-it`
-- `gemma-4-26b-a4b-it`
+Models are fetched live from provider APIs. Example present models include:
 
-### Groq
-
-- `llama-3.3-70b-versatile`
-- `qwen/qwen3.6-27b`
-- `llama-3.1-8b-instant`
+- **Google Gemini**: `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-2.5-pro`, `gemma-4-...`
+- **Groq**: `llama-3.3-70b-versatile`, `qwen/qwen3.6-27b`, `llama-3.1-8b-instant`, plus others
 
 ## Architecture
 
@@ -193,6 +189,9 @@ models.py              PostgreSQL project-memory models
 project_memory.py      Current-state reconciliation and database history
 memory_consolidator.py AI-driven memory consolidation
 document_parser.py     PDF, DOCX, TXT, and Markdown extraction
+config_loader.py       Centralized .env loader
+services/              AI service abstraction (`ai_service.py`, `schema_models.py`)
+app/                   Flask application package
 router.py              Provider routing and model discovery
 providers/             Gemini and Groq client implementations
 templates/             Flask HTML templates
@@ -212,6 +211,8 @@ tests/                 Application tests
 - **Groq SDK**
 - **python-docx** for DOCX extraction
 - **pypdf** for PDF extraction
+- **tenacity** for AI provider retry logic
+- **pydantic** for AI response schema validation
 
 ## Installation
 
@@ -222,13 +223,15 @@ python -m venv venv
 venv\Scripts\Activate.ps1
 ```
 
-Install dependencies:
+Install dependencies (including dev: `black`, `ruff`, `pytest`, `coverage`, `flask-wtf`):
 
 ```powershell
 pip install -r requirements.txt
+# Or install dev tools separately
+pip install black ruff pytest coverage flask-wtf
 ```
 
-Create a `.env` file in the project root:
+Create `.env` file (loaded centrally via `config_loader.py`):
 
 ```text
 GOOGLE_API_KEY=your_google_api_key

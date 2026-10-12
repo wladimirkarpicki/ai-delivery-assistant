@@ -17,7 +17,8 @@ ALLOWED_MODELS = {"google": GEMINI_ALLOWED_MODELS, "groq": GROQ_ALLOWED_MODELS}
 
 
 def get_available_models(router, provider):
-    return [model for model in router.get_models(provider) if model in ALLOWED_MODELS[provider]]
+    # Dynamic discovery: return all models reported by provider API
+    return router.get_models(provider)
 
 
 def get_project_memory(project_id):
