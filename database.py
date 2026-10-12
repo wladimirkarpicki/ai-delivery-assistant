@@ -1,6 +1,6 @@
 import os
 
-from dotenv import load_dotenv
+from config_loader import load_env
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 
@@ -10,7 +10,7 @@ migrate = Migrate()
 
 
 def configure_database(app):
-    load_dotenv(override=True)
+    load_env()
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL is missing. Configure PostgreSQL before starting the app.")
