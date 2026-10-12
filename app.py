@@ -74,6 +74,7 @@ def get_project_memory(project_id):
 
 def create_app(router_instance=None, database_url=None):
     app = Flask(__name__)
+    app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
     app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "development-only-change-me")
     if database_url:
         app.config["SQLALCHEMY_DATABASE_URI"] = database_url
