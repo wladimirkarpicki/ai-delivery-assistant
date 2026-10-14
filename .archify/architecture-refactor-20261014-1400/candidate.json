@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AI Delivery Assistant — Refactored Architecture",
+    "output": "architecture-refactor-20261014-1400/ai-delivery-assistant.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "flask", "type": "backend", "label": "Flask App (app.py)", "sublabel": "Web UI + routes", "pos": [440, 150], "size": [140, 60] },
+    { "id": "ingest", "type": "backend", "label": "Meeting Ingestion", "sublabel": "Upload / paste / parse", "pos": [160, 150], "size": [140, 60] },
+    { "id": "parser", "type": "backend", "label": "Document Parser", "sublabel": "PDF / DOCX / TXT / MD", "pos": [160, 260], "size": [140, 60] },
+    { "id": "analyzer", "type": "backend", "label": "AI Analyzer (analyzer.py)", "sublabel": "Prompt + JSON parse", "pos": [440, 260], "size": [200, 60] },
+    { "id": "router", "type": "backend", "label": "ModelRouter", "sublabel": "Dynamic discovery + caching", "pos": [720, 260], "size": [140, 60] },
+    { "id": "google", "type": "external", "label": "Google Gemini API", "sublabel": "gemini-2.5-flash / pro", "pos": [720, 140], "size": [140, 60], "tag": "Free tier" },
+    { "id": "groq", "type": "external", "label": "Groq API", "sublabel": "Llama / Qwen / Whisper", "pos": [720, 380], "size": [140, 60], "tag": "Free tier" },
+    { "id": "service", "type": "backend", "label": "AI Service (services/)", "sublabel": "ai_service + pydantic schemas", "pos": [440, 380], "size": [140, 60] },
+    { "id": "consolidator", "type": "backend", "label": "Memory Consolidator", "sublabel": "LLM reconciliation", "pos": [160, 380], "size": [140, 60] },
+    { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": "Project memory + history", "pos": [440, 490], "size": [140, 60] },
+    { "id": "config", "type": "security", "label": "Config Loader", "sublabel": "env / .env central", "pos": [160, 460], "size": [140, 60] },
+    { "id": "models", "type": "database", "label": "SQLAlchemy Models", "sublabel": "Project / Meeting / Risk / Action", "pos": [720, 490], "size": [140, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Local Development", "wraps": ["flask", "ingest", "parser", "analyzer", "router", "service", "consolidator", "db", "models", "config"] },
+    { "kind": "security-group", "label": "External APIs", "wraps": ["google", "groq"] }
+  ],
+  "connections": [
+    { "id": "flask-ingest", "from": "flask", "to": "ingest" },
+    { "id": "ingest-parser", "from": "ingest", "to": "parser" },
+    { "id": "parser-analyzer", "from": "parser", "to": "analyzer" },
+    { "id": "analyzer-router", "from": "analyzer", "to": "router" },
+    { "id": "router-google", "from": "router", "to": "google", "label": "generate", "variant": "emphasis" },
+    { "id": "router-groq", "from": "router", "to": "groq", "label": "generate", "variant": "emphasis" },
+    { "id": "service-analytics", "from": "service", "to": "router", "label": "unified call" },
+    { "id": "analyzer-consolidator", "from": "analyzer", "to": "consolidator", "label": "new findings" },
+    { "id": "consolidator-db", "from": "consolidator", "to": "db", "label": "apply plan" },
+    { "id": "db-models", "from": "db", "to": "models", "label": "ORM" },
+    { "id": "config-all", "from": "config", "to": "flask", "label": "env", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "UI / Ingest", "items": ["Flask routes + HTML templates", "File upload + paste", "Document parser (PDF/DOCX/TXT/MD)"] },
+    { "dot": "emerald", "title": "AI / Router", "items": ["Dynamic model discovery (no hardcoded list)", "Retry (tenacity) + model caching", "Pydantic schema validation", "Google + Groq free-tier APIs"] },
+    { "dot": "rose", "title": "Memory / DB", "items": ["PostgreSQL + SQLAlchemy (models)", "Meeting immutability + audit events", "Consolidation: CREATE / MERGE / UPDATE / CONFLICT"] }
+  ]
+}
