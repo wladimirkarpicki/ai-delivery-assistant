@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "21a2f7e8-9829-4847-a8b1-120d312c3bd5",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "C:\\Users\\Wladimir\\ai-delivery-assistant\\.archify\\architecture-refactor-20261014-1400\\candidate.json",
+  "output": "C:\\Users\\Wladimir\\ai-delivery-assistant\\.archify\\architecture-refactor-20261014-1400\\ai-delivery-assistant.html",
+  "specification": {
+    "sha256": "bbed6f819669a77b042527719d4c1a6a6ad582a4513a9c27a7fc6d25897d2bde",
+    "bytes": 3962
+  },
+  "artifact": {
+    "sha256": "b196171472b52fda6a1c2e748401686d1bfd2191488090f3065c2438602fdcd0",
+    "bytes": 766858
+  }
+}
