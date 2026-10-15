@@ -25,6 +25,7 @@ The project is designed around a practical delivery-management problem: **the sa
   - action items
 - Persistent project memory backed by PostgreSQL
 - AI-driven memory consolidation
+- Deterministic pre-matching: exact title duplicates are resolved without the LLM; remaining findings carry a candidate shortlist
 - Consolidation decisions for new findings:
   - **CREATE** — genuinely new information
   - **MERGE** — same underlying information with different wording
@@ -83,7 +84,12 @@ Meeting notes
 AI analysis
      |
      v
-Existing project memory + new findings
+Deterministic pre-match
+(exact title duplicates resolved)
+     |
+     v
+Existing memory + findings
+with candidate shortlists
      |
      v
 MemoryConsolidator
@@ -100,13 +106,15 @@ MemoryConsolidator
 Project memory + history
 ```
 
+Before anything reaches the LLM, `matching.py` resolves findings that exactly match an existing open item by normalized title: unchanged duplicates become MERGE entries and explicit status flips become UPDATE entries, without an LLM call. The remaining findings go to `MemoryConsolidator` annotated with a `candidate_ids` shortlist of similar existing items, which keeps the model from inventing ids. After the plan returns, CREATE entries that collide with an existing open title are downgraded to MERGE.
+
 `MemoryConsolidator` uses the selected AI provider/model to compare new findings with the existing project memory. Its output is then applied by `project_memory.py`, which keeps the database changes and history events separate from the AI decision layer.
 
 This separation is intentional: the AI proposes a consolidation plan, while the application remains responsible for applying that plan to the database.
 
 ### Current limitation
 
-The current consolidation mechanism is **LLM-based**. Because LLM output is probabilistic, semantically equivalent items can still occasionally be classified as `CREATE` when their wording is sufficiently different.
+Title normalization and fuzzy candidate shortlists are deterministic and already catch exact duplicates, but the final CREATE/MERGE/UPDATE/CONFLICT decision is still **LLM-based**. Because LLM output is probabilistic, semantically equivalent items can still occasionally be classified as `CREATE` when their wording is sufficiently different.
 
 For example:
 
@@ -117,7 +125,7 @@ Project Memory Relevance Review
 
 These may represent the same action even when the model fails to recognize them as such.
 
-A deterministic/semantic candidate-matching layer using normalization, fuzzy matching, and embeddings is a planned direction for making consolidation more robust and idempotent.
+An embedding-based semantic similarity layer is a planned direction for making consolidation more robust and idempotent.
 
 ## Supported models
 
@@ -189,6 +197,7 @@ database.py            SQLAlchemy and migration configuration
 models.py              PostgreSQL project-memory models
 project_memory.py      Current-state reconciliation and database history
 memory_consolidator.py AI-driven memory consolidation
+matching.py           Deterministic pre-matching and candidate shortlists
 document_parser.py     PDF, DOCX, TXT, and Markdown extraction
 config_loader.py       Centralized .env loader
 services/              AI response schemas (`schema_models.py`)
@@ -295,8 +304,6 @@ This separation makes the consolidation logic testable independently from the Fl
 
 Planned improvements include:
 
-- deterministic normalization before AI consolidation
-- lexical/fuzzy candidate matching
 - embedding-based semantic similarity
 - stronger idempotency guarantees for repeated processing of the same meeting
 - canonical titles and aliases for project-memory entities

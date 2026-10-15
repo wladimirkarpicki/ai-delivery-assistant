@@ -7,9 +7,15 @@ from analyzer import analyze_document, parse_analysis
 from config import DEFAULT_MODEL, DEFAULT_PROVIDER
 from database import configure_database, db
 from document_parser import extract_text
+from matching import (
+    combine_plans,
+    downgrade_create_duplicates,
+    has_llm_findings,
+    pre_match,
+)
 from memory_consolidator import MemoryConsolidator
 from models import ActionItem, Blocker, Decision, HistoryEvent, Meeting, Project, Risk
-from project_memory import apply_consolidation_plan, apply_meeting_analysis
+from project_memory import apply_consolidation_plan, apply_meeting_analysis, apply_state
 from router import ModelRouter
 
 def get_available_models(router):
@@ -157,21 +163,47 @@ def create_app(router_instance=None, database_url=None):
                 db.session.add(meeting)
                 db.session.flush()
                 
-                # Use AI-driven consolidation to avoid duplicates
+                # Deterministic pre-matching resolves exact title
+                # duplicates without the LLM; the remaining findings go
+                # to the LLM with a candidate shortlist, and the LLM
+                # plan passes a duplicate check before being applied.
                 try:
                     existing_memory = get_project_memory(project.id)
-                    consolidator = MemoryConsolidator(router)
-                    consolidation_plan = consolidator.consolidate(
-                        existing_memory=existing_memory,
-                        new_analysis=analysis_json,
-                        provider=DEFAULT_PROVIDER,
-                        model=selected_model
+                    pre_matched = pre_match(existing_memory, analysis_json)
+                    llm_findings = pre_matched["llm_findings"]
+
+                    if has_llm_findings(llm_findings):
+                        consolidator = MemoryConsolidator(router)
+                        consolidation_plan = consolidator.consolidate(
+                            existing_memory=existing_memory,
+                            new_analysis=llm_findings,
+                            provider=DEFAULT_PROVIDER,
+                            model=selected_model
+                        )
+                    else:
+                        consolidation_plan = {
+                            "risks": [],
+                            "blockers": [],
+                            "action_items": [],
+                            "decisions": [],
+                        }
+
+                    downgrade_create_duplicates(existing_memory, consolidation_plan)
+
+                    apply_consolidation_plan(
+                        project,
+                        meeting,
+                        combine_plans(pre_matched["auto"], consolidation_plan),
                     )
-                    apply_consolidation_plan(project, meeting, consolidation_plan)
                 except Exception as consolidation_error:
                     # Fallback to traditional analysis if consolidation fails
                     flash(f"Note: Consolidation encountered an issue ({str(consolidation_error)}), using standard analysis.", "warning")
                     apply_meeting_analysis(project, meeting, analysis_json)
+                else:
+                    # The consolidation path only reconciles individual
+                    # memory items: apply the meeting status and progress
+                    # explicitly (previously they were silently dropped).
+                    apply_state(project, meeting, analysis_json)
                 
                 db.session.commit()
                 flash("Meeting saved and project memory updated.", "success")
