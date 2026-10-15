@@ -16,6 +16,8 @@ Modern-minimal, Cobalt register: a cool, precise operational interface rather th
 
 Cool engineered paper, charcoal ink, hairline rules, and one restrained cobalt signal. Values and all reusable spacing, type, motion, and radius tokens live in `static/tokens.css`.
 
+Dark mode keeps the same register on engineered graphite: `tokens.css` re-declares the colour tokens under `:root[data-theme="dark"]`, the default follows the system colour scheme, the header toggle persists the visitor's choice in `localStorage`, and pages without JavaScript stay on the light theme.
+
 ## Typography
 
 - Display: Space Grotesk, upright, 500–700
