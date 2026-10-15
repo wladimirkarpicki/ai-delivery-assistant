@@ -56,6 +56,11 @@ Important rules:
 9. Do not delete existing memory directly. MERGE decisions will be handled
    by the application.
 10. Return only valid JSON. Do not use Markdown fences or commentary.
+11. Each new finding may include a "candidate_ids" list: the ids of the
+    existing items most similar to it. For MERGE, UPDATE, and CONFLICT
+    decisions, existing_item_id MUST be one of that finding's
+    candidate_ids. If candidate_ids is empty or absent, treat the
+    finding as new and use CREATE.
 
 Return exactly this structure:
 

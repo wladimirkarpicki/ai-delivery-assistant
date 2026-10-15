@@ -50,6 +50,10 @@ class FlaskAppTests(unittest.TestCase):
 
     def test_meetings_preserve_input_and_history_while_resolving_items(self):
         project_id = self.create_project()
+        # Meeting 1: the LLM plan creates the first risk and action
+        # item. Meeting 2: both findings exact-match by title with a
+        # status flip, so they are resolved deterministically without
+        # a second LLM consolidation call.
         self.router.responses = [
             {
                 "executive_summary": "QA is constrained.", "project_status": "at_risk", "progress_summary": "Testing is delayed.",
@@ -58,10 +62,12 @@ class FlaskAppTests(unittest.TestCase):
                 "blockers": [], "decisions": [],
                 "action_items": [{"title": "Find QA support", "details": "Ask support team", "owner": "Ava", "due_date": "2026-08-15", "status": "open"}],
             },
-            # Deliberately invalid consolidation output: forces the app to
-            # fall back to exact-title reconciliation, which is the path
-            # these assertions exercise.
-            "not-a-valid-consolidation-plan",
+            {
+                "risks": [{"decision": "CREATE", "new_item": {"title": "QA capacity", "description": "One tester", "impact": "high", "mitigation": "Borrow support", "status": "open"}, "reason": "no similar open risk"}],
+                "blockers": [],
+                "action_items": [{"decision": "CREATE", "new_item": {"title": "Find QA support", "details": "Ask support team", "owner": "Ava", "due_date": "2026-08-15", "status": "open"}, "reason": "no similar open action"}],
+                "decisions": [],
+            },
             {
                 "executive_summary": "QA support confirmed.", "project_status": "on_track", "progress_summary": "Testing is staffed.",
                 "completed_items": ["Find QA support"], "in_progress_items": ["Regression testing"],
@@ -73,6 +79,10 @@ class FlaskAppTests(unittest.TestCase):
         for title, notes in [("Weekly 1", "QA risk discussed"), ("Weekly 2", "QA support confirmed")]:
             response = self.client.post(f"/projects/{project_id}/meetings/new", data={"title": title, "meeting_notes": notes})
             self.assertEqual(response.status_code, 302)
+
+        # Both meetings consumed exactly their planned LLM calls: the
+        # second meeting was resolved deterministically.
+        self.assertEqual(self.router.responses, [])
 
         with self.app.app_context():
             self.assertEqual(Meeting.query.count(), 2)
@@ -86,7 +96,7 @@ class FlaskAppTests(unittest.TestCase):
             self.assertGreaterEqual(HistoryEvent.query.count(), 5)
 
         self.assertIn(b"QA risk discussed", self.client.get("/meetings/1").data)
-        self.assertIn(b"Resolved risk: QA capacity", self.client.get(f"/projects/{project_id}/history").data)
+        self.assertIn(b"Updated risk: QA capacity", self.client.get(f"/projects/{project_id}/history").data)
 
 
     def test_consolidation_guardrails(self):
@@ -257,6 +267,145 @@ class FlaskAppTests(unittest.TestCase):
         response = app.test_client().get("/boom")
         self.assertEqual(response.status_code, 500)
         self.assertIn(b"Something went wrong", response.data)
+
+
+    def test_consolidation_fallback_applies_state_and_items(self):
+        project_id = self.create_project()
+        self.router.responses = [
+            {
+                "executive_summary": "Blocked.", "project_status": "off_track", "progress_summary": "Nothing moved.",
+                "completed_items": [], "in_progress_items": [],
+                "risks": [{"title": "Deployment risk", "description": "No credentials", "impact": "high", "mitigation": "Request access", "status": "open"}],
+                "blockers": [], "decisions": [],
+                "action_items": [],
+            },
+            "not-a-valid-consolidation-plan",
+        ]
+
+        response = self.client.post(
+            f"/projects/{project_id}/meetings/new",
+            data={"title": "Weekly", "meeting_notes": "Deployment risk discussed"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        with self.app.app_context():
+            risk = Risk.query.one()
+            self.assertEqual(risk.title, "Deployment risk")
+
+            # The fallback path still applies the project state.
+            project = db.session.get(Project, project_id)
+            self.assertEqual(project.state.delivery_status, "off_track")
+
+            summaries = [event.summary for event in HistoryEvent.query.all()]
+            self.assertTrue(
+                any("Recorded risk: Deployment risk" in s for s in summaries)
+            )
+
+    def test_exact_duplicate_title_merged_without_second_llm_call(self):
+        project_id = self.create_project()
+        self.router.responses = [
+            {
+                "executive_summary": "API unstable.", "project_status": "at_risk", "progress_summary": "Flaky tests.",
+                "completed_items": [], "in_progress_items": [],
+                "risks": [{"title": "API instability", "description": "Flaky responses", "impact": "medium", "mitigation": "Investigate", "status": "open"}],
+                "blockers": [], "decisions": [],
+                "action_items": [],
+            },
+            {
+                "risks": [{"decision": "CREATE", "new_item": {"title": "API instability", "description": "Flaky responses", "impact": "medium", "mitigation": "Investigate", "status": "open"}, "reason": "new risk"}],
+                "blockers": [],
+                "action_items": [],
+                "decisions": [],
+            },
+            {
+                "executive_summary": "Still unstable.", "project_status": "at_risk", "progress_summary": "Flaky tests.",
+                "completed_items": [], "in_progress_items": [],
+                "risks": [{"title": "API Instability", "description": "Mentioned again", "impact": "medium", "mitigation": "Investigate", "status": "open"}],
+                "blockers": [], "decisions": [],
+                "action_items": [],
+            },
+        ]
+
+        for title in ("Weekly 1", "Weekly 2"):
+            response = self.client.post(
+                f"/projects/{project_id}/meetings/new",
+                data={"title": title, "meeting_notes": "API instability"},
+            )
+            self.assertEqual(response.status_code, 302)
+
+        # The second meeting exact-matched deterministically: only the
+        # two planned LLM calls were made.
+        self.assertEqual(self.router.responses, [])
+
+        with self.app.app_context():
+            self.assertEqual(Risk.query.count(), 1)
+
+            # The merge kept the original description, and the duplicate
+            # merge is visible in history.
+            risk = Risk.query.one()
+            self.assertEqual(risk.description, "Flaky responses")
+
+            summaries = [event.summary for event in HistoryEvent.query.all()]
+            self.assertTrue(any("Merged duplicate risk" in s for s in summaries))
+
+
+    def test_duplicate_creates_within_one_plan_are_merged(self):
+        project_id = self.create_project()
+
+        with self.app.app_context():
+            project = db.session.get(Project, project_id)
+
+            meeting = Meeting(
+                project_id=project_id,
+                title="Duplicate CREATE fixture",
+                original_text="notes",
+                analysis_text="{}",
+                analysis_json={},
+                provider="openrouter",
+                model="openrouter/free",
+            )
+            db.session.add(meeting)
+            db.session.flush()
+
+            plan = {
+                "risks": [
+                    {
+                        "decision": "CREATE",
+                        "new_item": {"title": "QA capacity", "status": "open"},
+                        "reason": "first",
+                    },
+                    {
+                        "decision": "CREATE",
+                        "new_item": {"title": "QA Capacity", "status": "open"},
+                        "reason": "second",
+                    },
+                ],
+                "blockers": [],
+                "action_items": [],
+                "decisions": [
+                    {
+                        "decision": "CREATE",
+                        "new_item": {"title": "Adopt flow"},
+                        "reason": "first",
+                    },
+                    {
+                        "decision": "CREATE",
+                        "new_item": {"title": "Adopt Flow"},
+                        "reason": "second",
+                    },
+                ],
+            }
+
+            apply_consolidation_plan(project, meeting, plan)
+            db.session.commit()
+
+            self.assertEqual(Risk.query.count(), 1)
+            self.assertEqual(Decision.query.count(), 1)
+
+            summaries = " | ".join(
+                event.summary for event in HistoryEvent.query.all()
+            )
+            self.assertIn("duplicate CREATE within the same plan", summaries)
 
 
 if __name__ == "__main__":

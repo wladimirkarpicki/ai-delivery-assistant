@@ -1,6 +1,7 @@
 from datetime import date
 
 from database import db
+from matching import normalize_title
 from models import (
     ActionItem,
     Blocker,
@@ -391,6 +392,7 @@ def _apply_consolidation_item(
     item,
     decision_type,
     model_class,
+    created,
 ):
     """
     Apply a single consolidation decision to the database.
@@ -433,6 +435,25 @@ def _apply_consolidation_item(
     # CREATE
     # ---------------------------------------------------------
     if decision_type == "CREATE":
+        created_titles = created.setdefault(model_class, {})
+        duplicate_id = created_titles.get(normalize_title(title))
+
+        if duplicate_id is not None:
+            # The same plan already created this title in this meeting:
+            # merge into it instead of creating a duplicate.
+            _event(
+                project.id,
+                meeting.id,
+                entity_label,
+                duplicate_id,
+                "merged",
+                (
+                    f"Merged duplicate {entity_label}: {title} "
+                    f"(duplicate CREATE within the same plan). "
+                    f"Reason: {reason}"
+                ),
+            )
+            return
 
         if model_class == ActionItem:
             due_date = _value(new_item, "due_date")
@@ -496,6 +517,8 @@ def _apply_consolidation_item(
 
         db.session.add(obj)
         db.session.flush()
+
+        created_titles[normalize_title(title)] = obj.id
 
         _event(
             project.id,
@@ -818,6 +841,10 @@ def apply_consolidation_plan(
         Preserve the existing item and record the conflict.
     """
 
+    # Titles already created by this plan, for intra-plan deduplication.
+    created = {}
+    created_decisions = {}
+
     # Process action items
     for item in consolidation_plan.get(
         "action_items",
@@ -831,6 +858,7 @@ def apply_consolidation_plan(
             item,
             decision,
             ActionItem,
+            created,
         )
 
     # Process risks
@@ -846,6 +874,7 @@ def apply_consolidation_plan(
             item,
             decision,
             Risk,
+            created,
         )
 
     # Process blockers
@@ -861,6 +890,7 @@ def apply_consolidation_plan(
             item,
             decision,
             Blocker,
+            created,
         )
 
     # Process decisions
@@ -897,30 +927,59 @@ def apply_consolidation_plan(
             )
 
         else:
-            decision_record = Decision(
-                project_id=project.id,
-                title=title,
-                details=_value(
-                    new_item,
-                    "details",
-                ),
-                created_in_meeting_id=meeting.id,
-            )
+            duplicate_decision_id = created_decisions.get(normalize_title(title))
 
-            db.session.add(decision_record)
-            db.session.flush()
+            if duplicate_decision_id is not None:
+                _event(
+                    project.id,
+                    meeting.id,
+                    "decision",
+                    duplicate_decision_id,
+                    "merged",
+                    (
+                        f"Merged duplicate decision: {title} "
+                        f"(duplicate CREATE within the same plan)."
+                    ),
+                )
 
-            _event(
-                project.id,
-                meeting.id,
-                "decision",
-                decision_record.id,
-                "created",
-                (
-                    f"Recorded decision: "
-                    f"{title} (via consolidation)"
-                ),
-            )
+            else:
+                decision_record = Decision(
+                    project_id=project.id,
+                    title=title,
+                    details=_value(
+                        new_item,
+                        "details",
+                    ),
+                    created_in_meeting_id=meeting.id,
+                )
+
+                db.session.add(decision_record)
+                db.session.flush()
+
+                created_decisions[normalize_title(title)] = decision_record.id
+
+                _event(
+                    project.id,
+                    meeting.id,
+                    "decision",
+                    decision_record.id,
+                    "created",
+                    (
+                        f"Recorded decision: "
+                        f"{title} (via consolidation)"
+                    ),
+                )
+
+
+def apply_state(project, meeting, analysis):
+    """
+    Apply the meeting analysis to the current project state.
+
+    Used by the consolidation path, which otherwise only reconciles
+    individual memory items and would silently drop the meeting's
+    status and progress summary.
+    """
+    _apply_state(project, meeting, analysis)
 
 
 def apply_meeting_analysis(
