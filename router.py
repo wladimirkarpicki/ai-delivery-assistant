@@ -1,5 +1,4 @@
-from providers.google_provider import GoogleProvider
-from providers.groq_provider import GroqProvider
+from providers.openrouter_provider import OpenRouterProvider
 
 
 class ModelRouter:
@@ -10,8 +9,7 @@ class ModelRouter:
     def __init__(self):
 
         self.provider_classes = {
-            "google": GoogleProvider,
-            "groq": GroqProvider,
+            "openrouter": OpenRouterProvider,
         }
         self.providers = {}
 

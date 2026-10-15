@@ -31,44 +31,6 @@
         >
     </label>
 
-    <div class="fields">
-
-        <label>
-            AI provider
-
-            <select name="provider" id="provider">
-                {% for label, value in providers.items() %}
-                    <option
-                        value="{{ value }}"
-                        {% if value == provider %}selected{% endif %}
-                    >
-                        {{ label }}
-                    </option>
-                {% endfor %}
-            </select>
-        </label>
-
-        <label>
-            AI model
-
-            <select
-                name="model"
-                id="model"
-                {% if not models %}disabled{% endif %}
-            >
-                {% for model in models %}
-                    <option
-                        value="{{ model }}"
-                        {% if model == selected_model %}selected{% endif %}
-                    >
-                        {{ model }}
-                    </option>
-                {% endfor %}
-            </select>
-        </label>
-
-    </div>
-
     <label>
         Upload notes
         <span>PDF, DOCX, TXT, or Markdown (max 20 MB)</span>
@@ -95,29 +57,11 @@
 
     <button
         type="submit"
-        {% if not models %}disabled{% endif %}
+        {% if not analysis_ready %}disabled{% endif %}
     >
         Analyze and save
     </button>
 </form>
 
-
-<script>
-    const provider = document.querySelector("#provider");
-    const model = document.querySelector("#model");
-
-    provider.addEventListener("change", async () => {
-        const response = await fetch(`/models/${provider.value}`);
-        const data = await response.json();
-
-        model.replaceChildren();
-
-        (data.models || []).forEach(name => {
-            model.add(new Option(name, name));
-        });
-
-        model.disabled = !data.models?.length;
-    });
-</script>
 
 {% endblock %}

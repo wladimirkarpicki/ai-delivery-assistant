@@ -10,7 +10,7 @@ The project is designed around a practical delivery-management problem: **the sa
 
 - AI analysis of project meeting notes
 - Light and dark themes — system-aware by default, with a manual toggle
-- Google Gemini and Groq provider support
+- OpenRouter provider — all analysis runs through the Free Models Router, no model selection
 - AI provider retry (3 attempts with exponential backoff) via `tenacity`
 - Dynamic model discovery from live provider APIs (no hardcoded model list)
 - Environment-based API key configuration (centralized loader)
@@ -119,14 +119,11 @@ A deterministic/semantic candidate-matching layer using normalization, fuzzy mat
 
 ## Supported models
 
-The application discovers available models dynamically from each provider API (`router.get_models()`). No hardcoded model list is used; supported models are fetched live from Google Gemini and Groq endpoints.
+The application always analyzes meetings with the **Free Models Router** (`openrouter/free`), which automatically selects a suitable free model for each request. There is no model selection in the interface.
 
 ### Dynamic model discovery
 
-Models are fetched live from provider APIs. Example present models include:
-
-- **Google Gemini**: `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-2.5-pro`, `gemma-4-...`
-- **Groq**: `llama-3.3-70b-versatile`, `qwen/qwen3.6-27b`, `llama-3.1-8b-instant`, plus others
+Free-tier models are fetched live from the OpenRouter API (`router.get_models()`), but only as a health check: the add-meeting form warns early if the provider or the router is unavailable. No hardcoded model list is used.
 
 ## Architecture
 
@@ -154,10 +151,11 @@ Models are fetched live from provider APIs. Example present models include:
                          +------------------+
                          | ModelRouter       |
                          +----+---------+----+
-                              |         |
-                         Gemini API   Groq API
-                              |         |
-                              +----+----+
+                                   |
+                                   v
+                         +------------------+
+                         |  OpenRouter API  |
+                         +---------+--------+
                                    |
                                    v
                          +------------------+
@@ -184,7 +182,7 @@ Models are fetched live from provider APIs. Example present models include:
 ```text
 app.py                 Flask routes and web UI entry point
 analyzer.py            Meeting-note analysis prompt and orchestration
-config.py              Supported provider/model configuration
+config.py              Default provider and model configuration
 database.py            SQLAlchemy and migration configuration
 models.py              PostgreSQL project-memory models
 project_memory.py      Current-state reconciliation and database history
@@ -192,9 +190,8 @@ memory_consolidator.py AI-driven memory consolidation
 document_parser.py     PDF, DOCX, TXT, and Markdown extraction
 config_loader.py       Centralized .env loader
 services/              AI service abstraction (`ai_service.py`, `schema_models.py`)
-app/                   Flask application package
 router.py              Provider routing and model discovery
-providers/             Gemini and Groq client implementations
+providers/             OpenRouter client implementation
 templates/             Flask HTML templates
 static/                CSS
 migrations/            Alembic database migrations
@@ -208,8 +205,7 @@ tests/                 Application tests
 - **Flask-SQLAlchemy**
 - **Flask-Migrate / Alembic**
 - **PostgreSQL**
-- **Google GenAI SDK**
-- **Groq SDK**
+- **httpx** for the OpenRouter REST API
 - **python-docx** for DOCX extraction
 - **pypdf** for PDF extraction
 - **tenacity** for AI provider retry logic
@@ -235,8 +231,7 @@ pip install black ruff pytest coverage flask-wtf
 Create `.env` file (loaded centrally via `config_loader.py`):
 
 ```text
-GOOGLE_API_KEY=your_google_api_key
-GROQ_API_KEY=your_groq_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 DATABASE_URL=postgresql+psycopg://user:password@localhost/ai-delivery-assistant
 FLASK_SECRET_KEY=replace-this-in-production
 ```
@@ -272,8 +267,7 @@ Then:
 1. Create a project.
 2. Add a meeting.
 3. Upload a PDF/DOCX/TXT/Markdown file or paste meeting notes.
-4. Select an AI provider and available model.
-5. Review the extracted project state and memory changes.
+4. Review the extracted project state and memory changes.
 
 ## Testing
 

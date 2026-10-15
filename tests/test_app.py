@@ -11,7 +11,7 @@ class FakeRouter:
         self.responses = []
 
     def get_models(self, provider):
-        return {"google": ["gemini-3.6-flash", "unsupported-model"], "groq": ["llama-3.3-70b-versatile"]}[provider]
+        return ["openrouter/free", "unsupported-model"]
 
     def generate(self, provider, model, prompt):
         return json.dumps(self.responses.pop(0))
@@ -36,12 +36,15 @@ class FlaskAppTests(unittest.TestCase):
         with self.app.app_context():
             return db.session.scalar(db.select(Project).filter_by(name="Phoenix")).id
 
-    def test_projects_page_and_filtered_models(self):
+    def test_projects_page_and_add_meeting_form(self):
         response = self.client.get("/projects")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"New project", response.data)
-        response = self.client.get("/models/google")
-        self.assertEqual(response.get_json()["models"], ["gemini-3.6-flash"])
+        response = self.client.get(f"/projects/{self.create_project()}/meetings/new")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'name="model"', response.data)
+        self.assertNotIn(b"AI model", response.data)
+        self.assertIn(b"Analyze and save", response.data)
 
     def test_meetings_preserve_input_and_history_while_resolving_items(self):
         project_id = self.create_project()
@@ -53,6 +56,10 @@ class FlaskAppTests(unittest.TestCase):
                 "blockers": [], "decisions": [],
                 "action_items": [{"title": "Find QA support", "details": "Ask support team", "owner": "Ava", "due_date": "2026-08-15", "status": "open"}],
             },
+            # Deliberately invalid consolidation output: forces the app to
+            # fall back to exact-title reconciliation, which is the path
+            # these assertions exercise.
+            "not-a-valid-consolidation-plan",
             {
                 "executive_summary": "QA support confirmed.", "project_status": "on_track", "progress_summary": "Testing is staffed.",
                 "completed_items": ["Find QA support"], "in_progress_items": ["Regression testing"],
@@ -62,7 +69,7 @@ class FlaskAppTests(unittest.TestCase):
             },
         ]
         for title, notes in [("Weekly 1", "QA risk discussed"), ("Weekly 2", "QA support confirmed")]:
-            response = self.client.post(f"/projects/{project_id}/meetings/new", data={"title": title, "provider": "groq", "model": "llama-3.3-70b-versatile", "meeting_notes": notes})
+            response = self.client.post(f"/projects/{project_id}/meetings/new", data={"title": title, "meeting_notes": notes})
             self.assertEqual(response.status_code, 302)
 
         with self.app.app_context():
