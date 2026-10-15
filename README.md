@@ -9,6 +9,7 @@ The project is designed around a practical delivery-management problem: **the sa
 ## Features
 
 - AI analysis of project meeting notes
+- Light and dark themes — system-aware by default, with a manual toggle
 - Google Gemini and Groq provider support
 - AI provider retry (3 attempts with exponential backoff) via `tenacity`
 - Dynamic model discovery from live provider APIs (no hardcoded model list)

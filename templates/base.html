@@ -9,6 +9,20 @@
         content="width=device-width, initial-scale=1"
     >
 
+    <script>
+        // Pre-paint: apply the stored or system theme before the stylesheet
+        // renders, so dark-mode visitors never see a light flash.
+        (function () {
+            try {
+                var stored = localStorage.getItem('theme');
+                var dark = stored === 'dark' || (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+            } catch (error) {
+                // Stay on the light theme if storage is unavailable.
+            }
+        })();
+    </script>
+
     <title>
         {% block title %}
             AI Delivery Assistant
@@ -32,6 +46,7 @@
             <button class="command-trigger" type="button" data-command-open aria-haspopup="dialog" aria-controls="command-palette">
                 Find <kbd>Ctrl K</kbd>
             </button>
+            <button class="icon-button" type="button" data-theme-toggle aria-label="Switch to dark theme" title="Switch to dark theme">☾</button>
         </div>
     </header>
 
@@ -75,6 +90,34 @@
         document.addEventListener('keydown', event => {
           if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
         });
+      })();
+      (() => {
+        const root = document.documentElement;
+        const themeButton = document.querySelector('[data-theme-toggle]');
+        const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+        const storedTheme = () => {
+          try { return localStorage.getItem('theme'); } catch (error) { return null; }
+        };
+        const renderThemeButton = () => {
+          const dark = root.dataset.theme === 'dark';
+          const label = dark ? 'Switch to light theme' : 'Switch to dark theme';
+          themeButton.textContent = dark ? '☀' : '☾';
+          themeButton.setAttribute('aria-label', label);
+          themeButton.setAttribute('title', label);
+        };
+        const setTheme = (dark, persist) => {
+          root.dataset.theme = dark ? 'dark' : 'light';
+          if (persist) {
+            try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch (error) {}
+          }
+          renderThemeButton();
+        };
+        themeButton.addEventListener('click', () => setTheme(root.dataset.theme !== 'dark', true));
+        systemDark.addEventListener('change', event => {
+          // Follow system changes only while the visitor has no stored choice.
+          if (!storedTheme()) setTheme(event.matches, false);
+        });
+        renderThemeButton();
       })();
     </script>
 
