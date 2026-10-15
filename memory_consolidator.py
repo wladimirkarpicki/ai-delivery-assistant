@@ -2,6 +2,7 @@ import json
 import re
 
 from router import ModelRouter
+from services.schema_models import validate_consolidation_plan
 
 
 class MemoryConsolidator:
@@ -185,6 +186,10 @@ NEW MEETING FINDINGS:
                 "The AI memory consolidation response "
                 "must be a JSON object."
             )
+
+        # Structural validation before the plan is applied; a
+        # malformed plan falls back to exact-title reconciliation.
+        validate_consolidation_plan(consolidation)
 
         required_sections = (
             "risks",

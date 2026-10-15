@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="page-heading">
+    <div>
+        <span class="eyebrow">Error 500</span>
+        <h1>Something went wrong</h1>
+        <p>The application hit an unexpected error while processing this request. Please try again.</p>
+    </div>
+</div>
+
+<section class="panel">
+    <p><a class="button" href="{{ url_for('projects') }}">Back to projects</a></p>
+</section>
+{% endblock %}
