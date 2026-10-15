@@ -190,6 +190,12 @@ def create_app(router_instance=None, database_url=None):
             return {"models": get_available_models(router, provider)}
         except (ValueError, RuntimeError) as exception:
             return {"error": str(exception)}, 400
+
+    @app.context_processor
+    def nav_projects():
+        """Feed the command palette with the current project list."""
+        return {"nav_projects": Project.query.order_by(Project.name.asc()).all()}
+
     return app
 
 

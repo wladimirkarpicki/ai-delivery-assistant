@@ -74,19 +74,19 @@
         <div>Auditable delivery memory from every meeting.</div>
     </footer>
 
-    <dialog class="command-palette" id="command-palette" aria-labelledby="command-title">
-        <div class="command-palette__head">
-            <strong id="command-title">Find your next view</strong>
-            <button class="icon-button" type="button" data-command-close aria-label="Close">×</button>
-        </div>
-        <a href="{{ url_for('projects') }}">Projects <span>Open the project list</span></a>
+    <dialog class="command-palette" id="command-palette" aria-label="Projects">
+        {% for project in nav_projects %}
+            <a href="{{ url_for('project_overview', project_id=project.id) }}">{{ project.name }}</a>
+        {% else %}
+            <a href="{{ url_for('projects') }}">Create your first project</a>
+        {% endfor %}
     </dialog>
     <script>
       (() => {
         const dialog = document.querySelector('#command-palette');
         const open = () => dialog.showModal();
         document.querySelectorAll('[data-command-open]').forEach(el => el.addEventListener('click', open));
-        document.querySelectorAll('[data-command-close]').forEach(el => el.addEventListener('click', () => dialog.close()));
+        dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
         document.addEventListener('keydown', event => {
           if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
         });
