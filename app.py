@@ -3,7 +3,7 @@ import os
 from flask import Flask, abort, flash, redirect, render_template, request, url_for
 
 from analyzer import analyze_document, parse_analysis
-from config import GEMINI_ALLOWED_MODELS, GROQ_ALLOWED_MODELS
+from config import DEFAULT_MODEL, DEFAULT_PROVIDER
 from database import configure_database, db
 from document_parser import extract_text
 from memory_consolidator import MemoryConsolidator
@@ -12,13 +12,10 @@ from project_memory import apply_consolidation_plan, apply_meeting_analysis
 from router import ModelRouter
 from router import ModelRouter
 
-PROVIDER_OPTIONS = {"Google Gemini": "google", "Groq": "groq"}
-ALLOWED_MODELS = {"google": GEMINI_ALLOWED_MODELS, "groq": GROQ_ALLOWED_MODELS}
-
-
-def get_available_models(router, provider):
-    # Dynamic discovery: return all models reported by provider API
-    return router.get_models(provider)
+def get_available_models(router):
+    # Dynamic discovery from the provider API. Used as a health check:
+    # the add-meeting form fails fast if the default model is missing.
+    return router.get_models(DEFAULT_PROVIDER)
 
 
 def get_project_memory(project_id):
@@ -129,17 +126,16 @@ def create_app(router_instance=None, database_url=None):
     @app.route("/projects/<int:project_id>/meetings/new", methods=["GET", "POST"])
     def add_meeting(project_id):
         project = db.session.get(Project, project_id) or abort(404)
-        provider = request.form.get("provider", "google")
-        if provider not in PROVIDER_OPTIONS.values():
-            provider = "google"
         error = None
         try:
-            models = get_available_models(router, provider)
+            models = get_available_models(router)
         except (ValueError, RuntimeError) as exception:
             models, error = [], str(exception)
-        selected_model = request.form.get("model")
-        if selected_model not in models:
-            selected_model = models[0] if models else None
+        # The app always analyzes with the Free Models Router; the model
+        # list is only a health check so the form can fail fast.
+        selected_model = DEFAULT_MODEL if DEFAULT_MODEL in models else None
+        if error is None and selected_model is None:
+            error = "The default model is currently unavailable."
         if request.method == "POST" and not error:
             notes = request.form.get("meeting_notes", "")
             uploaded_file = request.files.get("meeting_file")
@@ -152,9 +148,9 @@ def create_app(router_instance=None, database_url=None):
                     raise ValueError("Upload meeting notes or paste meeting text.")
                 if not selected_model:
                     raise ValueError("No supported models are currently available.")
-                analysis_text = analyze_document(original_text, provider, selected_model, router)
+                analysis_text = analyze_document(original_text, DEFAULT_PROVIDER, selected_model, router)
                 analysis_json = parse_analysis(analysis_text)
-                meeting = Meeting(project_id=project.id, title=request.form.get("title", "").strip() or "Untitled meeting", source_filename=source_filename, original_text=original_text, analysis_text=analysis_text, analysis_json=analysis_json, provider=provider, model=selected_model)
+                meeting = Meeting(project_id=project.id, title=request.form.get("title", "").strip() or "Untitled meeting", source_filename=source_filename, original_text=original_text, analysis_text=analysis_text, analysis_json=analysis_json, provider=DEFAULT_PROVIDER, model=selected_model)
                 db.session.add(meeting)
                 db.session.flush()
                 
@@ -165,7 +161,7 @@ def create_app(router_instance=None, database_url=None):
                     consolidation_plan = consolidator.consolidate(
                         existing_memory=existing_memory,
                         new_analysis=analysis_json,
-                        provider=provider,
+                        provider=DEFAULT_PROVIDER,
                         model=selected_model
                     )
                     apply_consolidation_plan(project, meeting, consolidation_plan)
@@ -180,16 +176,7 @@ def create_app(router_instance=None, database_url=None):
             except (ValueError, RuntimeError) as exception:
                 db.session.rollback()
                 error = str(exception)
-        return render_template("add_meeting.html", project=project, provider=provider, providers=PROVIDER_OPTIONS, models=models, selected_model=selected_model, error=error)
-
-    @app.get("/models/<provider>")
-    def models(provider):
-        if provider not in PROVIDER_OPTIONS.values():
-            return {"error": "Unsupported provider."}, 404
-        try:
-            return {"models": get_available_models(router, provider)}
-        except (ValueError, RuntimeError) as exception:
-            return {"error": str(exception)}, 400
+        return render_template("add_meeting.html", project=project, analysis_ready=selected_model is not None, error=error)
 
     @app.context_processor
     def nav_projects():

@@ -10,7 +10,7 @@
 <p class="record-meta">
     {{ meeting.created_at.strftime('%Y-%m-%d %H:%M') }}
     ·
-    {{ meeting.provider }} / {{ meeting.model }}
+    {{ meeting.model }}
 
     {% if meeting.source_filename %}
         · {{ meeting.source_filename }}
