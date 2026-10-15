@@ -2,6 +2,7 @@ import json
 import re
 
 from router import ModelRouter
+from services.schema_models import validate_analysis
 
 
 def build_prompt(text):
@@ -82,5 +83,9 @@ def parse_analysis(result):
 
     if not isinstance(analysis, dict):
         raise ValueError("The AI response must be a JSON object.")
+
+    # Fail loudly on a malformed contract instead of storing partial
+    # garbage in project memory.
+    validate_analysis(analysis)
 
     return analysis

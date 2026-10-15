@@ -26,6 +26,68 @@ def _find_open(model, project_id, title):
     ).first()
 
 
+def _plan_existing_item(project, model_class, item):
+    """
+    Resolve the AI-provided existing_item_id for a consolidation plan
+    entry and validate that it is safe to apply.
+
+    Returns an (existing, problem) tuple. When the id is valid, problem
+    is None. Otherwise existing is None and problem describes why:
+    "missing", "invalid", "not_found", or "foreign" (an item that
+    belongs to a different project).
+    """
+    existing_item_id = (
+        item.get("existing_item_id") if isinstance(item, dict) else None
+    )
+
+    if existing_item_id in (None, ""):
+        return None, "missing"
+
+    try:
+        existing_item_id = int(existing_item_id)
+    except (TypeError, ValueError):
+        return None, "invalid"
+
+    existing = db.session.get(model_class, existing_item_id)
+
+    if existing is None:
+        return None, "not_found"
+
+    if existing.project_id != project.id:
+        return None, "foreign"
+
+    return existing, None
+
+
+def _needs_review_event(project, meeting, entity_label, item, problem):
+    """
+    Record a consolidation plan entry that could not be applied safely.
+
+    Guardrails route invalid or unsupported plan entries here instead
+    of silently dropping them, so the finding stays visible in the
+    history trail for manual review.
+    """
+    new_item = item.get("new_item", {}) if isinstance(item, dict) else {}
+    title = _value(new_item, "title") or "(no title)"
+    decision = item.get("decision") if isinstance(item, dict) else None
+    reason = _value(item, "reason") or "(no reason given)"
+
+    _event(
+        project.id,
+        meeting.id,
+        entity_label,
+        None,
+        "needs_review",
+        (
+            f"Needs review: {entity_label} plan could not be applied "
+            f"({problem}; decision: {decision}). "
+            f"Finding: {title}. Reason: {reason}"
+        ),
+        None,
+        {"plan_item": item},
+    )
+
+
 def _event(
     project_id,
     meeting_id,
@@ -346,6 +408,10 @@ def _apply_consolidation_item(
     title = _value(new_item, "title")
     reason = _value(item, "reason")
 
+    # Normalize the AI-provided decision value (for example "create").
+    if isinstance(decision_type, str):
+        decision_type = decision_type.strip().upper()
+
     # Human-readable label used in history messages.
     # Keep database entity_type values separate from UI wording.
     if model_class == ActionItem:
@@ -358,6 +424,9 @@ def _apply_consolidation_item(
         return
 
     if not title:
+        # A plan entry without a title cannot be applied; preserve it
+        # for review instead of dropping it silently.
+        _needs_review_event(project, meeting, entity_label, item, "missing_title")
         return
 
     # ---------------------------------------------------------
@@ -442,15 +511,34 @@ def _apply_consolidation_item(
     # ---------------------------------------------------------
     elif decision_type == "MERGE":
 
-        # Existing item already represents this information.
-        # Do not create a duplicate.
-        if existing_item_id:
-            existing = db.session.get(
-                model_class,
-                existing_item_id,
+        if not existing_item_id:
+            _needs_review_event(
+                project,
+                meeting,
+                entity_label,
+                item,
+                "missing",
             )
 
-            if existing:
+        else:
+            existing, problem = _plan_existing_item(
+                project,
+                model_class,
+                item,
+            )
+
+            if problem:
+                _needs_review_event(
+                    project,
+                    meeting,
+                    entity_label,
+                    item,
+                    problem,
+                )
+
+            else:
+                # Existing item already represents this information.
+                # Do not create a duplicate.
                 _event(
                     project.id,
                     meeting.id,
@@ -468,11 +556,30 @@ def _apply_consolidation_item(
     # ---------------------------------------------------------
     elif decision_type == "UPDATE":
 
-        if existing_item_id:
-            existing = db.session.get(
-                model_class,
-                existing_item_id,
+        if not existing_item_id:
+            _needs_review_event(
+                project,
+                meeting,
+                entity_label,
+                item,
+                "missing",
             )
+
+        else:
+            existing, problem = _plan_existing_item(
+                project,
+                model_class,
+                item,
+            )
+
+            if problem:
+                _needs_review_event(
+                    project,
+                    meeting,
+                    entity_label,
+                    item,
+                    problem,
+                )
 
             if existing:
                 before = None
@@ -584,6 +691,27 @@ def _apply_consolidation_item(
 
                 existing.updated_in_meeting_id = meeting.id
 
+                # Keep resolution/completion stamps consistent with the
+                # new status (previously the status changed but the
+                # stamps did not, leaving resolved items without
+                # resolved_at and completed ones without completed_at).
+                if model_class == ActionItem:
+                    if existing.status == "completed":
+                        existing.completed_at = utcnow()
+                        existing.completed_in_meeting_id = meeting.id
+                    elif existing.completed_at is not None:
+                        # Reopened: clear the stale completion stamp.
+                        existing.completed_at = None
+                        existing.completed_in_meeting_id = None
+                else:
+                    if existing.status == "resolved":
+                        existing.resolved_at = utcnow()
+                        existing.resolved_in_meeting_id = meeting.id
+                    elif existing.resolved_at is not None:
+                        # Reopened: clear the stale resolution stamp.
+                        existing.resolved_at = None
+                        existing.resolved_in_meeting_id = None
+
                 _event(
                     project.id,
                     meeting.id,
@@ -603,14 +731,33 @@ def _apply_consolidation_item(
     # ---------------------------------------------------------
     elif decision_type == "CONFLICT":
 
-        # Preserve the existing item and record the conflict.
-        if existing_item_id:
-            existing = db.session.get(
-                model_class,
-                existing_item_id,
+        if not existing_item_id:
+            _needs_review_event(
+                project,
+                meeting,
+                entity_label,
+                item,
+                "missing",
             )
 
-            if existing:
+        else:
+            existing, problem = _plan_existing_item(
+                project,
+                model_class,
+                item,
+            )
+
+            if problem:
+                _needs_review_event(
+                    project,
+                    meeting,
+                    entity_label,
+                    item,
+                    problem,
+                )
+
+            else:
+                # Preserve the existing item and record the conflict.
                 _event(
                     project.id,
                     meeting.id,
@@ -634,6 +781,17 @@ def _apply_consolidation_item(
                         ),
                     },
                 )
+
+    else:
+        # Unknown decision type from the AI plan: preserve the entry
+        # for review instead of dropping it silently.
+        _needs_review_event(
+            project,
+            meeting,
+            entity_label,
+            item,
+            "unknown_decision",
+        )
 
 
 def apply_consolidation_plan(
@@ -712,35 +870,57 @@ def apply_consolidation_plan(
     ):
         decision = item.get("decision")
 
-        if decision == "CREATE":
-            new_item = item.get("new_item", {})
-            title = _value(new_item, "title")
+        if isinstance(decision, str):
+            decision = decision.strip().upper()
 
-            if title:
-                decision_record = Decision(
-                    project_id=project.id,
-                    title=title,
-                    details=_value(
-                        new_item,
-                        "details",
-                    ),
-                    created_in_meeting_id=meeting.id,
-                )
+        new_item = item.get("new_item", {})
+        title = _value(new_item, "title")
 
-                db.session.add(decision_record)
-                db.session.flush()
+        if decision != "CREATE":
+            # Decisions are append-only records: the plan can only
+            # create them. Anything else is preserved for review.
+            _needs_review_event(
+                project,
+                meeting,
+                "decision",
+                item,
+                "unsupported_decision",
+            )
 
-                _event(
-                    project.id,
-                    meeting.id,
-                    "decision",
-                    decision_record.id,
-                    "created",
-                    (
-                        f"Recorded decision: "
-                        f"{title} (via consolidation)"
-                    ),
-                )
+        elif not title:
+            _needs_review_event(
+                project,
+                meeting,
+                "decision",
+                item,
+                "missing_title",
+            )
+
+        else:
+            decision_record = Decision(
+                project_id=project.id,
+                title=title,
+                details=_value(
+                    new_item,
+                    "details",
+                ),
+                created_in_meeting_id=meeting.id,
+            )
+
+            db.session.add(decision_record)
+            db.session.flush()
+
+            _event(
+                project.id,
+                meeting.id,
+                "decision",
+                decision_record.id,
+                "created",
+                (
+                    f"Recorded decision: "
+                    f"{title} (via consolidation)"
+                ),
+            )
 
 
 def apply_meeting_analysis(

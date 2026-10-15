@@ -1,6 +1,7 @@
 import os
 
 from flask import Flask, abort, flash, redirect, render_template, request, url_for
+from flask_wtf import CSRFProtect
 
 from analyzer import analyze_document, parse_analysis
 from config import DEFAULT_MODEL, DEFAULT_PROVIDER
@@ -9,7 +10,6 @@ from document_parser import extract_text
 from memory_consolidator import MemoryConsolidator
 from models import ActionItem, Blocker, Decision, HistoryEvent, Meeting, Project, Risk
 from project_memory import apply_consolidation_plan, apply_meeting_analysis
-from router import ModelRouter
 from router import ModelRouter
 
 def get_available_models(router):
@@ -80,6 +80,9 @@ def create_app(router_instance=None, database_url=None):
     else:
         configure_database(app)
     router = router_instance or ModelRouter()
+
+    # Validate CSRF tokens on every POST form.
+    CSRFProtect(app)
 
     @app.get("/")
     def index():
@@ -182,6 +185,15 @@ def create_app(router_instance=None, database_url=None):
     def nav_projects():
         """Feed the command palette with the current project list."""
         return {"nav_projects": Project.query.order_by(Project.name.asc()).all()}
+
+    @app.errorhandler(404)
+    def page_not_found(error):
+        return render_template("404.html"), 404
+
+    @app.errorhandler(500)
+    def internal_server_error(error):
+        db.session.rollback()
+        return render_template("500.html"), 500
 
     return app
 

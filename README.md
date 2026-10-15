@@ -32,6 +32,8 @@ The project is designed around a practical delivery-management problem: **the sa
   - **CONFLICT** — new information contradicts existing memory
 - Immutable meeting records containing the original input and AI analysis
 - Immutable history events for memory changes
+- CSRF protection on all forms (Flask-WTF)
+- Custom 404 and 500 error pages
 - Environment-based API key configuration
 
 ## Project memory architecture
@@ -189,7 +191,7 @@ project_memory.py      Current-state reconciliation and database history
 memory_consolidator.py AI-driven memory consolidation
 document_parser.py     PDF, DOCX, TXT, and Markdown extraction
 config_loader.py       Centralized .env loader
-services/              AI service abstraction (`ai_service.py`, `schema_models.py`)
+services/              AI response schemas (`schema_models.py`)
 router.py              Provider routing and model discovery
 providers/             OpenRouter client implementation
 templates/             Flask HTML templates
