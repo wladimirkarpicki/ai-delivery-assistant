@@ -4,7 +4,15 @@ import unittest
 
 from app import create_app
 from database import db
-from models import ActionItem, Decision, HistoryEvent, Meeting, Project, Risk
+from models import (
+    ActionItem,
+    Decision,
+    HistoryEvent,
+    Meeting,
+    Project,
+    ReviewResolution,
+    Risk,
+)
 from project_memory import apply_consolidation_plan
 
 
@@ -553,6 +561,217 @@ class FlaskAppTests(unittest.TestCase):
                 "Reason: deterministic pre-match: duplicate decision title",
                 summaries,
             )
+
+
+    def _seed_review_events(self, project_id):
+        """
+        Create needs_review events via a crafted invalid plan.
+
+        Returns the (meeting id, risk event id, decision event id).
+        """
+        with self.app.app_context():
+            project = db.session.get(Project, project_id)
+
+            meeting = Meeting(
+                project_id=project_id,
+                title="Review fixture",
+                original_text="notes",
+                analysis_text="{}",
+                analysis_json={},
+                provider="openrouter",
+                model="openrouter/free",
+            )
+            db.session.add(meeting)
+            db.session.flush()
+
+            plan = {
+                "risks": [
+                    {
+                        "decision": "MERGE",
+                        "existing_item_id": 999,
+                        "new_item": {"title": "Vendor risk", "status": "open"},
+                        "reason": "bogus id",
+                    },
+                ],
+                "blockers": [],
+                "action_items": [],
+                "decisions": [
+                    {
+                        "decision": "UPDATE",
+                        "existing_item_id": 1,
+                        "new_item": {"title": "Pick flow"},
+                        "reason": "not supported",
+                    },
+                ],
+            }
+
+            apply_consolidation_plan(project, meeting, plan)
+            db.session.commit()
+
+            events = HistoryEvent.query.filter_by(
+                project_id=project_id,
+                event_type="needs_review",
+            ).order_by(HistoryEvent.id).all()
+
+            risk_event = next(e for e in events if e.entity_type == "risk")
+            decision_event = next(
+                e for e in events if e.entity_type == "decision"
+            )
+
+            return meeting.id, risk_event.id, decision_event.id
+
+    def test_review_queue_lists_and_resolves_via_create(self):
+        project_id = self.create_project()
+        meeting_id, risk_event_id, decision_event_id = (
+            self._seed_review_events(project_id)
+        )
+
+        # The overview badge shows the unresolved count.
+        overview = self.client.get(f"/projects/{project_id}")
+        self.assertIn(b"Review (2)", overview.data)
+
+        # The queue lists both findings.
+        queue = self.client.get(f"/projects/{project_id}/review")
+        self.assertEqual(queue.status_code, 200)
+        self.assertIn(b"Vendor risk", queue.data)
+        self.assertIn(b"Pick flow", queue.data)
+
+        # Resolve the risk finding by creating the item.
+        response = self.client.post(
+            f"/projects/{project_id}/review/{risk_event_id}/resolve",
+            data={"action": "create"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        with self.app.app_context():
+            risk = Risk.query.one()
+            self.assertEqual(risk.title, "Vendor risk")
+            self.assertEqual(risk.canonical_title, "vendor risk")
+            self.assertEqual(risk.created_in_meeting_id, meeting_id)
+
+            resolution = ReviewResolution.query.one()
+            self.assertEqual(resolution.action, "applied_create")
+            self.assertEqual(resolution.target_item_id, risk.id)
+
+            summaries = " | ".join(
+                event.summary
+                for event in HistoryEvent.query.order_by(HistoryEvent.id).all()
+            )
+            self.assertIn(
+                "Created risk: Vendor risk (from review queue)", summaries
+            )
+
+        # One finding left in the queue.
+        queue = self.client.get(f"/projects/{project_id}/review")
+        self.assertIn(b"Pick flow", queue.data)
+        self.assertNotIn(b"Vendor risk", queue.data)
+
+    def test_review_queue_resolves_via_link(self):
+        project_id = self.create_project()
+        meeting_id, risk_event_id, decision_event_id = (
+            self._seed_review_events(project_id)
+        )
+
+        with self.app.app_context():
+            decision = Decision(
+                project_id=project_id,
+                title="Pick flow",
+                canonical_title="pick flow",
+                details="",
+                created_in_meeting_id=meeting_id,
+            )
+            db.session.add(decision)
+            db.session.commit()
+            decision_id = decision.id
+
+        response = self.client.post(
+            f"/projects/{project_id}/review/{decision_event_id}/resolve",
+            data={"action": "link", "target_item_id": str(decision_id)},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        with self.app.app_context():
+            # No duplicate decision was created.
+            self.assertEqual(Decision.query.count(), 1)
+
+            resolution = ReviewResolution.query.one()
+            self.assertEqual(resolution.action, "applied_merge")
+            self.assertEqual(resolution.target_item_id, decision_id)
+
+            summaries = " | ".join(
+                event.summary
+                for event in HistoryEvent.query.order_by(HistoryEvent.id).all()
+            )
+            self.assertIn(
+                "Merged duplicate decision: Pick flow -> Pick flow "
+                "(from review queue)",
+                summaries,
+            )
+
+        # The risk finding remains; the badge shows one.
+        overview = self.client.get(f"/projects/{project_id}")
+        self.assertIn(b"Review (1)", overview.data)
+
+    def test_review_queue_dismiss_and_reopen_guard(self):
+        project_id = self.create_project()
+        meeting_id, risk_event_id, decision_event_id = (
+            self._seed_review_events(project_id)
+        )
+
+        response = self.client.post(
+            f"/projects/{project_id}/review/{risk_event_id}/resolve",
+            data={"action": "dismiss", "note": "not relevant"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        with self.app.app_context():
+            resolution = ReviewResolution.query.one()
+            self.assertEqual(resolution.action, "acknowledged")
+            self.assertEqual(resolution.note, "not relevant")
+
+            # Nothing was created for the dismissed finding.
+            self.assertEqual(Risk.query.count(), 0)
+
+        # Double resolution is rejected with a flash, not an error.
+        response = self.client.post(
+            f"/projects/{project_id}/review/{risk_event_id}/resolve",
+            data={"action": "dismiss"},
+            follow_redirects=True,
+        )
+        self.assertIn(b"already resolved", response.data)
+
+    def test_review_create_refuses_duplicate_title(self):
+        project_id = self.create_project()
+        meeting_id, risk_event_id, decision_event_id = (
+            self._seed_review_events(project_id)
+        )
+
+        with self.app.app_context():
+            existing = Risk(
+                project_id=project_id,
+                title="Vendor risk",
+                canonical_title="vendor risk",
+                created_in_meeting_id=meeting_id,
+                updated_in_meeting_id=meeting_id,
+            )
+            db.session.add(existing)
+            db.session.commit()
+
+        response = self.client.post(
+            f"/projects/{project_id}/review/{risk_event_id}/resolve",
+            data={"action": "create"},
+            follow_redirects=True,
+        )
+
+        self.assertIn(b"already exists", response.data)
+
+        with self.app.app_context():
+            # Still one risk, no resolution recorded, event still open.
+            self.assertEqual(Risk.query.count(), 1)
+            self.assertEqual(ReviewResolution.query.count(), 0)
+
+        overview = self.client.get(f"/projects/{project_id}")
+        self.assertIn(b"Review (2)", overview.data)
 
 
 if __name__ == "__main__":

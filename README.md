@@ -28,6 +28,7 @@ The project is designed around a practical delivery-management problem: **the sa
 - Deterministic pre-matching: exact title duplicates are resolved without the LLM; remaining findings carry a candidate shortlist
 - Canonical titles as item identity: one row per title per project (enforced by unique indexes); resolved items reopen instead of duplicating
 - Idempotent uploads: submitting identical meeting notes is a no-op with an explicit warning
+- Review queue: findings the consolidation guardrails reject are surfaced for explicit resolution (create, link to existing, or dismiss) — never silently dropped
 - Consolidation decisions for new findings:
   - **CREATE** — genuinely new information
   - **MERGE** — same underlying information with different wording
@@ -310,7 +311,6 @@ Planned improvements include:
 
 - embedding-based semantic similarity
 - expanded automated tests for semantic duplicate scenarios
-- improved handling of consolidation confidence and ambiguous cases
 
 ## Status
 

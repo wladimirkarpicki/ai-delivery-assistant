@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<article class="record-page">
+<a href="{{ url_for('project_overview', project_id=project.id) }}">← {{ project.name }}</a>
+<span class="eyebrow">Quality gate</span>
+<h1>Review queue</h1>
+
+<p>
+    Findings the consolidation guardrails could not apply safely.
+    Resolve each one explicitly: nothing is silently dropped.
+</p>
+
+{% for entry in queue %}
+
+<section class="panel">
+    <p><strong>{{ entry.event.summary }}</strong></p>
+
+    {% if entry.new_item.get("title") %}
+        <p>
+            Finding: <strong>{{ entry.new_item.get("title", "") }}</strong>
+
+            {% if entry.new_item.get("status") %}
+                · status: {{ entry.new_item.get("status") }}
+            {% endif %}
+        </p>
+    {% endif %}
+
+    <small>
+        Meeting #{{ entry.event.meeting_id }}
+        ·
+        {{ entry.event.created_at.strftime('%Y-%m-%d %H:%M') }}
+    </small>
+
+    <form method="post" action="{{ url_for('resolve_review_event', project_id=project.id, event_id=entry.event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="create">
+        <button type="submit">Create item</button>
+    </form>
+
+    {% if entry.targets %}
+    <form method="post" action="{{ url_for('resolve_review_event', project_id=project.id, event_id=entry.event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="link">
+        <label>
+            Link to existing:
+            <select name="target_item_id">
+                {% for target in entry.targets %}
+                    <option value="{{ target.id }}">#{{ target.id }} — {{ target.title }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit">Link</button>
+    </form>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('resolve_review_event', project_id=project.id, event_id=entry.event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="dismiss">
+        <label>
+            <input type="text" name="note" placeholder="Optional note">
+        </label>
+        <button type="submit">Dismiss</button>
+    </form>
+</section>
+
+{% else %}
+
+<section class="panel">
+    <p>Nothing needs review. 🎉</p>
+</section>
+
+{% endfor %}
+
+</article>
+
+{% endblock %}
