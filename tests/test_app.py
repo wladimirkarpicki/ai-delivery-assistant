@@ -920,6 +920,76 @@ class FlaskAppTests(unittest.TestCase):
             self.assertEqual(risk.title, "QA capacity")
             self.assertIsNone(risk.title_embedding)
 
+    def _seed_meeting(self, project_id, analysis_json):
+        """Insert a meeting row directly with a known analysis payload."""
+        with self.app.app_context():
+            meeting = Meeting(
+                project_id=project_id,
+                title="Analysis fixture",
+                original_text="notes",
+                analysis_text="{}",
+                analysis_json=analysis_json,
+                provider="openrouter",
+                model="openrouter/free",
+            )
+            db.session.add(meeting)
+            db.session.commit()
+            return meeting.id
+
+    def test_meeting_page_renders_parsed_analysis(self):
+        project_id = self.create_project()
+        analysis = {
+            "executive_summary": "Delivery slowed by vendor delays.",
+            "project_status": "at_risk",
+            "progress_summary": "Two of five milestones done.",
+            "completed_items": ["Spec sign-off"],
+            "in_progress_items": ["Vendor onboarding"],
+            "risks": [{
+                "title": "Vendor API quota exhaustion",
+                "description": "Rate limit hit.",
+                "impact": "high",
+                "mitigation": "Request increase",
+                "status": "open",
+            }],
+            "blockers": [],
+            "action_items": [{
+                "title": "Chase vendor",
+                "details": "Email support",
+                "owner": "Ava",
+                "due_date": "2026-08-15",
+                "status": "open",
+            }],
+            "decisions": [{
+                "title": "Postpone marketing campaign",
+                "details": "Until beta",
+            }],
+        }
+        meeting_id = self._seed_meeting(project_id, analysis)
+
+        page = self.client.get(f"/meetings/{meeting_id}")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"AI analysis", page.data)
+        self.assertIn(b"At Risk", page.data)
+        self.assertIn(b"Delivery slowed by vendor delays.", page.data)
+        self.assertIn(b"Two of five milestones done.", page.data)
+        self.assertIn(b"Spec sign-off", page.data)
+        self.assertIn(b"Vendor onboarding", page.data)
+        self.assertIn(b"Vendor API quota exhaustion", page.data)
+        self.assertIn(b"Impact: high", page.data)
+        self.assertIn(b"Chase vendor", page.data)
+        self.assertIn(b"Due: 2026-08-15", page.data)
+        self.assertIn(b"Postpone marketing campaign", page.data)
+
+    def test_meeting_page_without_analysis(self):
+        project_id = self.create_project()
+        meeting_id = self._seed_meeting(project_id, {})
+
+        page = self.client.get(f"/meetings/{meeting_id}")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"No structured analysis stored", page.data)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,170 @@
     </section>
 
 
+{% set analysis = meeting.analysis_json if meeting.analysis_json is mapping else {} %}
+{% set completed = analysis.get('completed_items') or [] %}
+{% set in_progress = analysis.get('in_progress_items') or [] %}
+{% set risks = analysis.get('risks') or [] %}
+{% set blockers = analysis.get('blockers') or [] %}
+{% set actions = analysis.get('action_items') or [] %}
+{% set decisions = analysis.get('decisions') or [] %}
+
+<section class="workspace-section">
+
+    <h2>AI analysis</h2>
+
+    {% if analysis %}
+
+        <section class="status-card">
+            <strong>
+                {{ (analysis.get('project_status') or 'unknown')
+                    | replace('_', ' ')
+                    | title }}
+            </strong>
+
+            <p>
+                {{ analysis.get('executive_summary')
+                    or 'No executive summary.' }}
+            </p>
+        </section>
+
+        {% if analysis.get('progress_summary') %}
+            <p>{{ analysis.get('progress_summary') }}</p>
+        {% endif %}
+
+        {% if completed or in_progress %}
+            <div class="cards" aria-label="Milestones">
+
+                <section class="panel">
+                    <h2>Completed</h2>
+
+                    {% for item in completed %}
+                        <article><strong>{{ item }}</strong></article>
+                    {% else %}
+                        <p>None.</p>
+                    {% endfor %}
+                </section>
+
+                <section class="panel">
+                    <h2>In progress</h2>
+
+                    {% for item in in_progress %}
+                        <article><strong>{{ item }}</strong></article>
+                    {% else %}
+                        <p>None.</p>
+                    {% endfor %}
+                </section>
+
+            </div>
+        {% endif %}
+
+        {% if risks or blockers or actions or decisions %}
+            <div class="cards" aria-label="Extracted findings">
+
+                <section class="panel">
+                    <h2>Risks</h2>
+
+                    {% for item in risks %}
+                        <article>
+                            <strong>{{ item.get('title') or 'Untitled' }}</strong>
+
+                            {% if item.get('description') %}
+                                <p>{{ item.get('description') }}</p>
+                            {% endif %}
+
+                            <small>
+                                Status: {{ item.get('status') or 'unspecified' }}
+
+                                {% if item.get('impact') %}
+                                    · Impact: {{ item.get('impact') }}
+                                {% endif %}
+
+                                {% if item.get('mitigation') %}
+                                    · Mitigation: {{ item.get('mitigation') }}
+                                {% endif %}
+                            </small>
+                        </article>
+                    {% else %}
+                        <p>None.</p>
+                    {% endfor %}
+                </section>
+
+                <section class="panel">
+                    <h2>Blockers</h2>
+
+                    {% for item in blockers %}
+                        <article>
+                            <strong>{{ item.get('title') or 'Untitled' }}</strong>
+
+                            {% if item.get('description') %}
+                                <p>{{ item.get('description') }}</p>
+                            {% endif %}
+
+                            <small>
+                                Status: {{ item.get('status') or 'unspecified' }}
+                            </small>
+                        </article>
+                    {% else %}
+                        <p>None.</p>
+                    {% endfor %}
+                </section>
+
+                <section class="panel">
+                    <h2>Action items</h2>
+
+                    {% for item in actions %}
+                        <article>
+                            <strong>{{ item.get('title') or 'Untitled' }}</strong>
+
+                            {% if item.get('details') %}
+                                <p>{{ item.get('details') }}</p>
+                            {% endif %}
+
+                            <small>
+                                Status: {{ item.get('status') or 'unspecified' }}
+
+                                {% if item.get('owner') %}
+                                    · Owner: {{ item.get('owner') }}
+                                {% endif %}
+
+                                {% if item.get('due_date') %}
+                                    · Due: {{ item.get('due_date') }}
+                                {% endif %}
+                            </small>
+                        </article>
+                    {% else %}
+                        <p>None.</p>
+                    {% endfor %}
+                </section>
+
+                <section class="panel">
+                    <h2>Decisions</h2>
+
+                    {% for item in decisions %}
+                        <article>
+                            <strong>{{ item.get('title') or 'Untitled' }}</strong>
+
+                            {% if item.get('details') %}
+                                <p>{{ item.get('details') }}</p>
+                            {% endif %}
+                        </article>
+                    {% else %}
+                        <p>None.</p>
+                    {% endfor %}
+                </section>
+
+            </div>
+        {% endif %}
+
+    {% else %}
+
+        <p>No structured analysis stored for this meeting.</p>
+
+    {% endif %}
+
+</section>
+
+
 <section class="workspace-section">
 
     <h2>Changes from this meeting</h2>
