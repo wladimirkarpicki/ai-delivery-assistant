@@ -4,13 +4,14 @@ from flask import Flask, abort, flash, redirect, render_template, request, url_f
 from flask_wtf import CSRFProtect
 
 from analyzer import analyze_document, parse_analysis
-from config import DEFAULT_MODEL, DEFAULT_PROVIDER
+from config import DEFAULT_MODEL, DEFAULT_PROVIDER, EMBEDDING_MODEL
 from database import configure_database, db
 from document_parser import extract_text
 from matching import (
     combine_plans,
     downgrade_create_duplicates,
     has_llm_findings,
+    normalize_title,
     pre_match,
 )
 from memory_consolidator import MemoryConsolidator
@@ -51,6 +52,7 @@ def get_project_memory(project_id):
             "id": risk.id,
             "title": risk.title,
             "canonical_title": risk.canonical_title,
+            "embedding": risk.title_embedding,
             "description": risk.description,
             "impact": risk.impact,
             "mitigation": risk.mitigation,
@@ -62,6 +64,7 @@ def get_project_memory(project_id):
             "id": blocker.id,
             "title": blocker.title,
             "canonical_title": blocker.canonical_title,
+            "embedding": blocker.title_embedding,
             "description": blocker.description,
             "status": blocker.status
         })
@@ -71,6 +74,7 @@ def get_project_memory(project_id):
             "id": action.id,
             "title": action.title,
             "canonical_title": action.canonical_title,
+            "embedding": action.title_embedding,
             "details": action.details,
             "owner": action.owner,
             "due_date": action.due_date.isoformat() if action.due_date else None,
@@ -82,10 +86,95 @@ def get_project_memory(project_id):
             "id": decision.id,
             "title": decision.title,
             "canonical_title": decision.canonical_title,
+            "embedding": decision.title_embedding,
             "details": decision.details
         })
 
     return memory
+
+
+_MEMORY_MODEL_CLASSES = {
+    "risks": Risk,
+    "blockers": Blocker,
+    "action_items": ActionItem,
+    "decisions": Decision,
+}
+
+
+def ensure_item_embeddings(router, memory):
+    """
+    Embed items whose title_embedding is missing and persist the
+    vectors. Titles are stable, so each item is embedded once and
+    later meetings reuse the stored vector.
+
+    Embeddings are an enrichment layer: on any provider failure the
+    memory is returned unchanged and candidate matching falls back to
+    lexical similarity.
+    """
+    pending = []
+
+    for section in _MEMORY_MODEL_CLASSES:
+        for item in memory.get(section) or []:
+            canonical = item.get("canonical_title") or ""
+
+            if not item.get("embedding") and canonical.strip():
+                pending.append((section, item, canonical))
+
+    if not pending:
+        return memory
+
+    try:
+        vectors = router.embed_texts(
+            DEFAULT_PROVIDER,
+            EMBEDDING_MODEL,
+            [canonical for _, _, canonical in pending],
+        )
+    except Exception:
+        # Silent degradation: lexical candidate ranking still works.
+        return memory
+
+    for (section, item, _), vector in zip(pending, vectors):
+        item["embedding"] = vector
+
+        row = db.session.get(_MEMORY_MODEL_CLASSES[section], item["id"])
+
+        if row is not None:
+            row.title_embedding = vector
+
+    db.session.commit()
+
+    return memory
+
+
+def embed_finding_titles(router, analysis):
+    """
+    Embed the finding titles of a new analysis and return a mapping
+    of canonical title -> vector for pre_match. Never raises: without
+    embeddings the pre-match falls back to lexical candidates.
+    """
+    titles = []
+    seen = set()
+
+    for section in ("risks", "blockers", "action_items", "decisions"):
+        for finding in analysis.get(section) or []:
+            if not isinstance(finding, dict):
+                continue
+
+            title = normalize_title(finding.get("title"))
+
+            if title and title not in seen:
+                seen.add(title)
+                titles.append(title)
+
+    if not titles:
+        return {}
+
+    try:
+        vectors = router.embed_texts(DEFAULT_PROVIDER, EMBEDDING_MODEL, titles)
+    except Exception:
+        return {}
+
+    return dict(zip(titles, vectors))
 
 
 def create_app(router_instance=None, database_url=None):
@@ -322,7 +411,13 @@ def create_app(router_instance=None, database_url=None):
                 # plan passes a duplicate check before being applied.
                 try:
                     existing_memory = get_project_memory(project.id)
-                    pre_matched = pre_match(existing_memory, analysis_json)
+                    ensure_item_embeddings(router, existing_memory)
+                    finding_embeddings = embed_finding_titles(
+                        router, analysis_json
+                    )
+                    pre_matched = pre_match(
+                        existing_memory, analysis_json, finding_embeddings
+                    )
                     llm_findings = pre_matched["llm_findings"]
 
                     if has_llm_findings(llm_findings):

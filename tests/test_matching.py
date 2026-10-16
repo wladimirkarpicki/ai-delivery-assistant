@@ -3,6 +3,7 @@ import unittest
 from matching import (
     ALL_SECTIONS,
     combine_plans,
+    cosine_similarity,
     downgrade_create_duplicates,
     has_llm_findings,
     normalize_title,
@@ -343,6 +344,81 @@ class DowngradeTests(unittest.TestCase):
             combined["decisions"],
             [{"decision": "CREATE", "new_item": {"title": "D"}}],
         )
+
+
+class SemanticMatchingTests(unittest.TestCase):
+    MEMORY = {
+        "risks": [
+            {
+                "id": 1,
+                "title": "QA capacity",
+                "canonical_title": "qa capacity",
+                "embedding": [0.9, 0.1],
+                "status": "open",
+            },
+            {
+                "id": 2,
+                "title": "Budget overrun",
+                "canonical_title": "budget overrun",
+                "embedding": [0.1, 0.9],
+                "status": "open",
+            },
+        ],
+        "blockers": [],
+        "action_items": [],
+        "decisions": [],
+    }
+
+    def test_cosine_similarity_basics(self):
+        self.assertAlmostEqual(cosine_similarity([1, 0], [1, 0]), 1.0)
+        self.assertAlmostEqual(cosine_similarity([1, 0], [0, 1]), 0.0)
+        self.assertAlmostEqual(cosine_similarity([], [1, 0]), 0.0)
+        self.assertAlmostEqual(cosine_similarity([1, 1], [1, 1]), 1.0)
+        self.assertAlmostEqual(cosine_similarity([2, 0], [1, 0]), 1.0)
+
+    def test_semantic_candidates_bridge_zero_lexical_overlap(self):
+        # "Insufficient staffing" shares no word with either title,
+        # so lexical ranking finds nothing at all.
+        analysis = {
+            "risks": [{"title": "Insufficient staffing", "status": "open"}]
+        }
+
+        lexical = pre_match(self.MEMORY, analysis)
+        self.assertEqual(lexical["llm_findings"]["risks"][0]["candidate_ids"], [])
+
+        # With embeddings the finding lands next to the QA-capacity
+        # risk; the budget risk follows with a much lower score.
+        semantic = pre_match(
+            self.MEMORY,
+            analysis,
+            {"insufficient staffing": [1.0, 0.0]},
+        )
+        self.assertEqual(
+            semantic["llm_findings"]["risks"][0]["candidate_ids"],
+            [1, 2],
+        )
+
+    def test_candidates_fall_back_to_lexical_without_vectors(self):
+        # Items without embeddings rank lexically even when the
+        # finding carries a vector.
+        memory = {
+            "risks": [
+                {
+                    "id": 7,
+                    "title": "QA capacity",
+                    "canonical_title": "qa capacity",
+                    "status": "open",
+                }
+            ],
+            "blockers": [],
+            "action_items": [],
+            "decisions": [],
+        }
+        analysis = {"risks": [{"title": "QA capacity crunch", "status": "open"}]}
+
+        result = pre_match(memory, analysis, {"qa capacity crunch": [1.0, 0.0]})
+
+        self.assertEqual(result["llm_findings"]["risks"][0]["candidate_ids"], [7])
 
 
 if __name__ == "__main__":

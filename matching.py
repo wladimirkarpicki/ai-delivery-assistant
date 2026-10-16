@@ -15,10 +15,15 @@ is the same decision and is merged without an LLM call.
 
 The findings that still need the LLM are returned as copies annotated
 with a candidate_ids shortlist of similar existing items, which keeps
-the LLM from inventing ids. After the LLM answers, CREATE entries that
+the LLM from inventing ids. Candidate similarity is semantic: when the
+finding and the existing item carry title embeddings, candidates are
+ranked by cosine similarity, so paraphrases with no shared words still
+reach the LLM as candidates. Without embeddings the ranking falls back
+to lexical token overlap. After the LLM answers, CREATE entries that
 collide with an existing title are downgraded to MERGE.
 """
 
+import math
 import re
 
 ALL_SECTIONS = ("risks", "blockers", "action_items", "decisions")
@@ -59,6 +64,21 @@ def similarity(tokens_a, tokens_b):
     return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
 
 
+def cosine_similarity(vector_a, vector_b):
+    """Cosine similarity between two embedding vectors, 0.0 to 1.0."""
+    if not vector_a or not vector_b:
+        return 0.0
+
+    dot = sum(a * b for a, b in zip(vector_a, vector_b))
+    norm_a = math.sqrt(sum(a * a for a in vector_a))
+    norm_b = math.sqrt(sum(b * b for b in vector_b))
+
+    if not norm_a or not norm_b:
+        return 0.0
+
+    return dot / (norm_a * norm_b)
+
+
 def _index_items(items):
     """Map canonical title -> item for a memory section."""
     index = {}
@@ -80,15 +100,25 @@ def _index_items(items):
     return index
 
 
-def _find_candidates(items, finding_tokens, limit=CANDIDATE_LIMIT):
-    """The most similar existing items for a finding, best first."""
+def _find_candidates(items, finding_tokens, finding_vector=None, limit=CANDIDATE_LIMIT):
+    """
+    The most similar existing items for a finding, best first.
+
+    Uses embedding cosine similarity when both the finding and the
+    item carry vectors, and lexical token overlap otherwise.
+    """
     scored = []
 
     for item in items or []:
         if not isinstance(item, dict):
             continue
 
-        score = similarity(finding_tokens, title_tokens(item.get("title")))
+        item_vector = item.get("embedding")
+
+        if isinstance(finding_vector, list) and isinstance(item_vector, list):
+            score = cosine_similarity(finding_vector, item_vector)
+        else:
+            score = similarity(finding_tokens, title_tokens(item.get("title")))
 
         if score > 0:
             scored.append((score, item))
@@ -125,8 +155,14 @@ def _status_change_new_item(section, existing, finding):
     return new_item
 
 
-def _annotate_candidates(existing_memory, unmatched):
-    """Copy each unmatched finding and attach its candidate_ids."""
+def _annotate_candidates(existing_memory, unmatched, finding_embeddings=None):
+    """
+    Copy each unmatched finding and attach its candidate_ids.
+
+    finding_embeddings maps a finding's canonical title to its
+    embedding vector; findings without a vector fall back to lexical
+    candidate ranking.
+    """
     annotated = {}
 
     for section in ALL_SECTIONS:
@@ -135,7 +171,10 @@ def _annotate_candidates(existing_memory, unmatched):
 
         for finding in unmatched.get(section) or []:
             tokens = title_tokens(finding.get("title"))
-            candidates = _find_candidates(items, tokens)
+            vector = (finding_embeddings or {}).get(
+                normalize_title(finding.get("title"))
+            )
+            candidates = _find_candidates(items, tokens, finding_vector=vector)
 
             section_annotated.append({
                 **finding,
@@ -190,9 +229,12 @@ def _dedupe_findings(findings):
     return ordered
 
 
-def pre_match(existing_memory, analysis):
+def pre_match(existing_memory, analysis, finding_embeddings=None):
     """
     Deterministic pre-matching pass over new findings.
+
+    finding_embeddings optionally maps finding canonical titles to
+    embedding vectors for semantic candidate ranking.
 
     Returns {"auto": {section: [plan entries]}, "llm_findings":
     {section: [finding copies]}}. The original analysis payload is
@@ -266,7 +308,9 @@ def pre_match(existing_memory, analysis):
 
     return {
         "auto": auto,
-        "llm_findings": _annotate_candidates(existing_memory, unmatched),
+        "llm_findings": _annotate_candidates(
+            existing_memory, unmatched, finding_embeddings
+        ),
     }
 
 

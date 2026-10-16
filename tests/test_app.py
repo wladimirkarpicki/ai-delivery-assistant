@@ -19,12 +19,25 @@ from project_memory import apply_consolidation_plan
 class FakeRouter:
     def __init__(self):
         self.responses = []
+        self.embedded_texts = []
+        self.prompts = []
 
     def get_models(self, provider):
         return ["openrouter/free", "unsupported-model"]
 
     def generate(self, provider, model, prompt):
+        self.prompts.append(prompt)
         return json.dumps(self.responses.pop(0))
+
+    def embed_texts(self, provider, model, texts):
+        # Deterministic vectors: QA/tester-related titles map to one
+        # direction, everything else to another, so tests can create
+        # semantic matches with zero lexical overlap.
+        self.embedded_texts.extend(texts)
+        return [
+            [1.0, 0.0] if ("qa" in t or "tester" in t) else [0.0, 1.0]
+            for t in texts
+        ]
 
 
 class FlaskAppTests(unittest.TestCase):
@@ -772,6 +785,140 @@ class FlaskAppTests(unittest.TestCase):
 
         overview = self.client.get(f"/projects/{project_id}")
         self.assertIn(b"Review (2)", overview.data)
+
+
+    def test_semantic_paraphrase_reaches_llm_as_candidate(self):
+        project_id = self.create_project()
+
+        # Meeting 1 creates the risk "QA capacity". Meeting 2 mentions
+        # the same risk with a paraphrase that shares no word with the
+        # stored title: only the semantic layer can make it a
+        # candidate for the LLM.
+        self.router.responses = [
+            {
+                "executive_summary": "QA is constrained.",
+                "project_status": "at_risk",
+                "progress_summary": "Testing is delayed.",
+                "completed_items": [],
+                "in_progress_items": [],
+                "risks": [{
+                    "title": "QA capacity",
+                    "description": "One tester",
+                    "impact": "high",
+                    "mitigation": "Borrow support",
+                    "status": "open",
+                }],
+                "blockers": [], "decisions": [], "action_items": [],
+            },
+            {
+                "risks": [{
+                    "decision": "CREATE",
+                    "new_item": {
+                        "title": "QA capacity",
+                        "description": "One tester",
+                        "impact": "high",
+                        "mitigation": "Borrow support",
+                        "status": "open",
+                    },
+                    "reason": "no similar open risk",
+                }],
+                "blockers": [], "action_items": [], "decisions": [],
+            },
+            {
+                "executive_summary": "Still short on testers.",
+                "project_status": "at_risk",
+                "progress_summary": "Hiring is slow.",
+                "completed_items": [],
+                "in_progress_items": [],
+                "risks": [{
+                    "title": "Insufficient tester headcount",
+                    "status": "open",
+                }],
+                "blockers": [], "decisions": [], "action_items": [],
+            },
+            {
+                "risks": [{
+                    "decision": "MERGE",
+                    "existing_item_id": 1,
+                    "new_item": {"title": "Insufficient tester headcount"},
+                    "reason": "same risk, reworded",
+                }],
+                "blockers": [], "action_items": [], "decisions": [],
+            },
+        ]
+
+        for title, notes in [
+            ("Weekly 1", "QA capacity discussed"),
+            ("Weekly 2", "Not enough testers on the team"),
+        ]:
+            response = self.client.post(
+                f"/projects/{project_id}/meetings/new",
+                data={"title": title, "meeting_notes": notes},
+            )
+            self.assertEqual(response.status_code, 302)
+
+        self.assertEqual(self.router.responses, [])
+
+        with self.app.app_context():
+            # The paraphrase merged into the existing risk instead of
+            # duplicating it.
+            self.assertEqual(Risk.query.count(), 1)
+            risk = Risk.query.one()
+            self.assertEqual(risk.title, "QA capacity")
+
+            # The lazy backfill persisted the item's embedding.
+            self.assertEqual(risk.title_embedding, [1.0, 0.0])
+
+        # The consolidation prompt for meeting 2 carried the risk as a
+        # semantic candidate of the zero-overlap paraphrase.
+        consolidation_prompt = self.router.prompts[3]
+        self.assertIn("candidate_ids", consolidation_prompt)
+        self.assertRegex(consolidation_prompt, r'"candidate_ids": \[\s*1')
+
+    def test_embedding_outage_falls_back_silently(self):
+        project_id = self.create_project()
+
+        def broken_embed(provider, model, texts):
+            raise RuntimeError("embeddings endpoint down")
+
+        self.router.embed_texts = broken_embed
+
+        self.router.responses = [
+            {
+                "executive_summary": "QA is constrained.",
+                "project_status": "at_risk",
+                "progress_summary": "Testing is delayed.",
+                "completed_items": [],
+                "in_progress_items": [],
+                "risks": [{
+                    "title": "QA capacity",
+                    "description": "One tester",
+                    "impact": "high",
+                    "mitigation": "Borrow support",
+                    "status": "open",
+                }],
+                "blockers": [], "decisions": [], "action_items": [],
+            },
+            {
+                "risks": [{
+                    "decision": "CREATE",
+                    "new_item": {"title": "QA capacity", "status": "open"},
+                    "reason": "no similar open risk",
+                }],
+                "blockers": [], "action_items": [], "decisions": [],
+            },
+        ]
+
+        response = self.client.post(
+            f"/projects/{project_id}/meetings/new",
+            data={"title": "Weekly 1", "meeting_notes": "QA risk discussed"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        with self.app.app_context():
+            risk = Risk.query.one()
+            self.assertEqual(risk.title, "QA capacity")
+            self.assertIsNone(risk.title_embedding)
 
 
 if __name__ == "__main__":

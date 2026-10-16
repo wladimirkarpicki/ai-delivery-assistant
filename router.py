@@ -59,3 +59,28 @@ class ModelRouter:
 
 
         return selected_provider.get_models()
+
+    def embed_texts(
+        self,
+        provider,
+        model,
+        texts,
+    ):
+        """
+        Embed texts with the provider's embedding model.
+
+        Args:
+            provider (str): provider name
+            model (str): embedding model identifier
+            texts (list[str]): texts to embed
+
+        Returns:
+            list[list[float]]: one embedding vector per input text
+        """
+
+        selected_provider = self._get_provider(provider)
+
+        return selected_provider.embed_texts(
+            model=model,
+            texts=texts,
+        )
