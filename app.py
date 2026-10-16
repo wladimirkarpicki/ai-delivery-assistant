@@ -14,8 +14,15 @@ from matching import (
     pre_match,
 )
 from memory_consolidator import MemoryConsolidator
-from models import ActionItem, Blocker, Decision, HistoryEvent, Meeting, Project, Risk
-from project_memory import apply_consolidation_plan, apply_meeting_analysis, apply_state
+from models import ActionItem, Blocker, Decision, HistoryEvent, Meeting, Project, ReviewResolution, Risk
+from project_memory import (
+    apply_consolidation_plan,
+    apply_meeting_analysis,
+    apply_review_create,
+    apply_review_merge,
+    apply_state,
+    review_model_class,
+)
 from router import ModelRouter
 
 def get_available_models(router):
@@ -119,7 +126,12 @@ def create_app(router_instance=None, database_url=None):
     @app.get("/projects/<int:project_id>")
     def project_overview(project_id):
         project = db.session.get(Project, project_id) or abort(404)
-        return render_template("project_overview.html", project=project, risks=Risk.query.filter_by(project_id=project.id, status="open").order_by(Risk.id.desc()).all(), blockers=Blocker.query.filter_by(project_id=project.id, status="open").order_by(Blocker.id.desc()).all(), actions=ActionItem.query.filter_by(project_id=project.id, status="open").order_by(ActionItem.id.desc()).all(), meeting_count=Meeting.query.filter_by(project_id=project.id).count())
+        needs_review_count = (
+            HistoryEvent.query.filter_by(project_id=project.id, event_type="needs_review")
+            .filter(~HistoryEvent.review_resolution.has())
+            .count()
+        )
+        return render_template("project_overview.html", project=project, risks=Risk.query.filter_by(project_id=project.id, status="open").order_by(Risk.id.desc()).all(), blockers=Blocker.query.filter_by(project_id=project.id, status="open").order_by(Blocker.id.desc()).all(), actions=ActionItem.query.filter_by(project_id=project.id, status="open").order_by(ActionItem.id.desc()).all(), meeting_count=Meeting.query.filter_by(project_id=project.id).count(), needs_review_count=needs_review_count)
 
     @app.get("/projects/<int:project_id>/meetings")
     def project_meetings(project_id):
@@ -137,6 +149,125 @@ def create_app(router_instance=None, database_url=None):
         project = db.session.get(Project, project_id) or abort(404)
         events = HistoryEvent.query.filter_by(project_id=project.id).order_by(HistoryEvent.created_at.desc(), HistoryEvent.id.desc()).all()
         return render_template("history.html", project=project, events=events)
+
+    def open_review_events(project):
+        return (
+            HistoryEvent.query.filter_by(
+                project_id=project.id,
+                event_type="needs_review",
+            )
+            .filter(~HistoryEvent.review_resolution.has())
+            .order_by(HistoryEvent.id.desc())
+            .all()
+        )
+
+    @app.get("/projects/<int:project_id>/review")
+    def review_queue(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+
+        queue = []
+
+        for event in open_review_events(project):
+            plan_item = (event.after_data or {}).get("plan_item") or {}
+            new_item = plan_item.get("new_item") or {}
+            model_class = review_model_class(event.entity_type)
+            targets = []
+
+            if model_class is not None:
+                targets = [
+                    {"id": item.id, "title": item.title}
+                    for item in model_class.query.filter_by(project_id=project.id)
+                    .order_by(model_class.title)
+                    .all()
+                ]
+
+            queue.append({
+                "event": event,
+                "plan_item": plan_item,
+                "new_item": new_item,
+                "targets": targets,
+            })
+
+        return render_template("review_queue.html", project=project, queue=queue)
+
+    @app.post("/projects/<int:project_id>/review/<int:event_id>/resolve")
+    def resolve_review_event(project_id, event_id):
+        project = db.session.get(Project, project_id) or abort(404)
+
+        event = HistoryEvent.query.filter_by(
+            id=event_id,
+            project_id=project.id,
+            event_type="needs_review",
+        ).first() or abort(404)
+
+        if event.review_resolution is not None:
+            flash("This review item was already resolved.", "error")
+            return redirect(url_for("review_queue", project_id=project.id))
+
+        meeting = db.session.get(Meeting, event.meeting_id) or abort(404)
+        plan_item = (event.after_data or {}).get("plan_item") or {}
+        action = request.form.get("action", "")
+        resolution_action = None
+        target_item_id = None
+
+        try:
+            if action == "create":
+                record = apply_review_create(
+                    project,
+                    meeting,
+                    event.entity_type,
+                    plan_item,
+                )
+                resolution_action = "applied_create"
+                target_item_id = record.id
+            elif action == "link":
+                model_class = review_model_class(event.entity_type)
+
+                if model_class is None:
+                    raise ValueError("Unknown entity type.")
+
+                raw_target = request.form.get("target_item_id", "")
+
+                try:
+                    target = db.session.get(model_class, int(raw_target))
+                except (TypeError, ValueError):
+                    target = None
+
+                if target is None or target.project_id != project.id:
+                    raise ValueError(
+                        "Pick an item from this project to link to."
+                    )
+
+                apply_review_merge(
+                    project,
+                    meeting,
+                    event.entity_type,
+                    plan_item,
+                    target,
+                )
+                resolution_action = "applied_merge"
+                target_item_id = target.id
+            elif action == "dismiss":
+                resolution_action = "acknowledged"
+            else:
+                raise ValueError("Unknown review action.")
+        except ValueError as exception:
+            flash(str(exception), "error")
+            return redirect(url_for("review_queue", project_id=project.id))
+
+        note = request.form.get("note", "").strip()
+
+        db.session.add(
+            ReviewResolution(
+                history_event_id=event.id,
+                action=resolution_action,
+                target_item_id=target_item_id,
+                note=note,
+            )
+        )
+        db.session.commit()
+        flash("Review item resolved.", "success")
+        return redirect(url_for("review_queue", project_id=project.id))
 
     @app.route("/projects/<int:project_id>/meetings/new", methods=["GET", "POST"])
     def add_meeting(project_id):

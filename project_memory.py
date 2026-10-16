@@ -1015,6 +1015,166 @@ def apply_consolidation_plan(
         )
 
 
+REVIEW_ENTITY_MODELS = {
+    "risk": Risk,
+    "risks": Risk,
+    "blocker": Blocker,
+    "blockers": Blocker,
+    "action item": ActionItem,
+    "action_item": ActionItem,
+    "action items": ActionItem,
+    "decision": Decision,
+    "decisions": Decision,
+}
+
+
+def review_model_class(entity_type):
+    """The model class a needs-review event refers to, if any."""
+    if not isinstance(entity_type, str):
+        return None
+
+    return REVIEW_ENTITY_MODELS.get(entity_type.strip().casefold())
+
+
+def apply_review_create(project, meeting, entity_type, plan_item):
+    """
+    Apply a needs-review plan item as a CREATE from the review queue.
+
+    Returns the created record. Raises ValueError when the item cannot
+    be created safely, so the route can surface the reason.
+    """
+    model_class = review_model_class(entity_type)
+
+    if model_class is None:
+        raise ValueError(f"Unknown entity type: {entity_type}")
+
+    new_item = plan_item.get("new_item") if isinstance(plan_item, dict) else {}
+    title = _value(new_item, "title")
+
+    if not title:
+        raise ValueError("The plan item has no title to create.")
+
+    canonical = normalize_title(title)
+
+    # One row per canonical title per project: point the reviewer at
+    # the existing item instead of creating a duplicate.
+    existing = model_class.query.filter_by(
+        project_id=project.id,
+        canonical_title=canonical,
+    ).first()
+
+    if existing is not None:
+        raise ValueError(
+            f"An item with this title already exists ({existing.title}); "
+            f"link the finding to it instead."
+        )
+
+    if model_class == Decision:
+        record = Decision(
+            project_id=project.id,
+            title=title,
+            canonical_title=canonical,
+            details=_value(new_item, "details"),
+            created_in_meeting_id=meeting.id,
+        )
+
+        db.session.add(record)
+        db.session.flush()
+
+        _event(
+            project.id,
+            meeting.id,
+            entity_type,
+            record.id,
+            "created",
+            f"Created decision: {title} (from review queue)",
+        )
+
+        return record
+
+    if model_class == ActionItem:
+        due_date = _value(new_item, "due_date")
+
+        try:
+            due_date = date.fromisoformat(due_date) if due_date else None
+        except (ValueError, TypeError):
+            due_date = None
+
+        record = ActionItem(
+            project_id=project.id,
+            title=title,
+            canonical_title=canonical,
+            details=_value(new_item, "details"),
+            owner=_value(new_item, "owner"),
+            due_date=due_date,
+            status=_value(new_item, "status", "open") or "open",
+            created_in_meeting_id=meeting.id,
+            updated_in_meeting_id=meeting.id,
+        )
+    else:
+        record = model_class(
+            project_id=project.id,
+            title=title,
+            canonical_title=canonical,
+            description=_value(new_item, "description"),
+            status=_value(new_item, "status", "open") or "open",
+            created_in_meeting_id=meeting.id,
+            updated_in_meeting_id=meeting.id,
+        )
+
+        if model_class == Risk:
+            record.impact = _value(new_item, "impact", "unknown")
+            record.mitigation = _value(new_item, "mitigation")
+
+    if record.status in ("resolved", "completed"):
+        if model_class == ActionItem:
+            record.completed_at = utcnow()
+            record.completed_in_meeting_id = meeting.id
+        else:
+            record.resolved_at = utcnow()
+            record.resolved_in_meeting_id = meeting.id
+
+    db.session.add(record)
+    db.session.flush()
+
+    _event(
+        project.id,
+        meeting.id,
+        entity_type,
+        record.id,
+        "created",
+        f"Created {entity_type}: {title} (from review queue)",
+    )
+
+    return record
+
+
+def apply_review_merge(project, meeting, entity_type, plan_item, target):
+    """
+    Record a merge of a needs-review finding into an existing item.
+
+    The existing item keeps its data; the merge is recorded in the
+    history trail.
+    """
+    new_item = plan_item.get("new_item") if isinstance(plan_item, dict) else {}
+    title = _value(new_item, "title") or "(no title)"
+    reason = _value(plan_item, "reason") or "(no reason given)"
+
+    _event(
+        project.id,
+        meeting.id,
+        entity_type,
+        target.id,
+        "merged",
+        (
+            f"Merged duplicate {entity_type}: {title} -> {target.title} "
+            f"(from review queue). Reason: {reason}"
+        ),
+    )
+
+    return target
+
+
 def apply_state(project, meeting, analysis):
     """
     Apply the meeting analysis to the current project state.

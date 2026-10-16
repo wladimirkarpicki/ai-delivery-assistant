@@ -125,3 +125,22 @@ class HistoryEvent(db.Model):
     before_data = db.Column(db.JSON, nullable=True)
     after_data = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+
+    review_resolution = db.relationship(
+        "ReviewResolution",
+        uselist=False,
+        back_populates="history_event",
+    )
+
+
+class ReviewResolution(db.Model):
+    __tablename__ = "review_resolutions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    history_event_id = db.Column(db.Integer, db.ForeignKey("history_events.id"), nullable=False, unique=True, index=True)
+    action = db.Column(db.String(30), nullable=False)
+    target_item_id = db.Column(db.Integer, nullable=True)
+    note = db.Column(db.Text, nullable=False, default="")
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+
+    history_event = db.relationship("HistoryEvent", back_populates="review_resolution")
