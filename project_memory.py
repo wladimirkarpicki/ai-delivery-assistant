@@ -19,11 +19,11 @@ def _value(item, key, default=""):
     return value.strip() if isinstance(value, str) else value
 
 
-def _find_open(model, project_id, title):
+def _find_by_canonical_title(model, project_id, title):
+    """Find the item whose canonical identity matches this title."""
     return model.query.filter_by(
         project_id=project_id,
-        title=title,
-        status="open",
+        canonical_title=normalize_title(title),
     ).first()
 
 
@@ -154,13 +154,14 @@ def _apply_risks(project, meeting, risks):
         if not title:
             continue
 
-        risk = _find_open(Risk, project.id, title)
+        risk = _find_by_canonical_title(Risk, project.id, title)
         is_resolved = _value(item, "status", "open") == "resolved"
 
         if risk is None:
             risk = Risk(
                 project_id=project.id,
                 title=title,
+                canonical_title=normalize_title(title),
                 description=_value(item, "description"),
                 impact=_value(item, "impact", "unknown"),
                 mitigation=_value(item, "mitigation"),
@@ -232,13 +233,14 @@ def _apply_blockers(project, meeting, blockers):
         if not title:
             continue
 
-        blocker = _find_open(Blocker, project.id, title)
+        blocker = _find_by_canonical_title(Blocker, project.id, title)
         resolved = _value(item, "status", "open") == "resolved"
 
         if blocker is None:
             blocker = Blocker(
                 project_id=project.id,
                 title=title,
+                canonical_title=normalize_title(title),
                 description=_value(item, "description"),
                 status="resolved" if resolved else "open",
                 created_in_meeting_id=meeting.id,
@@ -301,7 +303,7 @@ def _apply_actions(project, meeting, actions):
         if not title:
             continue
 
-        action_item = _find_open(ActionItem, project.id, title)
+        action_item = _find_by_canonical_title(ActionItem, project.id, title)
         completed = _value(item, "status", "open") == "completed"
 
         due_date = _value(item, "due_date", None)
@@ -315,6 +317,7 @@ def _apply_actions(project, meeting, actions):
             action_item = ActionItem(
                 project_id=project.id,
                 title=title,
+                canonical_title=normalize_title(title),
                 details=_value(item, "details"),
                 owner=_value(item, "owner", None),
                 due_date=due_date,
@@ -470,6 +473,7 @@ def _apply_consolidation_item(
             obj = ActionItem(
                 project_id=project.id,
                 title=title,
+                canonical_title=normalize_title(title),
                 details=_value(new_item, "details"),
                 owner=_value(new_item, "owner"),
                 due_date=due_date,
@@ -482,6 +486,7 @@ def _apply_consolidation_item(
             obj = Risk(
                 project_id=project.id,
                 title=title,
+                canonical_title=normalize_title(title),
                 description=_value(new_item, "description"),
                 impact=_value(new_item, "impact", "unknown"),
                 mitigation=_value(new_item, "mitigation"),
@@ -494,6 +499,7 @@ def _apply_consolidation_item(
             obj = Blocker(
                 project_id=project.id,
                 title=title,
+                canonical_title=normalize_title(title),
                 description=_value(new_item, "description"),
                 status=_value(new_item, "status", "open"),
                 created_in_meeting_id=meeting.id,
@@ -507,13 +513,14 @@ def _apply_consolidation_item(
             "completed",
             "resolved",
         ):
-            obj.status = (
-                "completed"
-                if model_class == ActionItem
-                else "resolved"
-            )
-            obj.completed_at = utcnow()
-            obj.completed_in_meeting_id = meeting.id
+            if model_class == ActionItem:
+                obj.status = "completed"
+                obj.completed_at = utcnow()
+                obj.completed_in_meeting_id = meeting.id
+            else:
+                obj.status = "resolved"
+                obj.resolved_at = utcnow()
+                obj.resolved_in_meeting_id = meeting.id
 
         db.session.add(obj)
         db.session.flush()
@@ -906,9 +913,41 @@ def apply_consolidation_plan(
         new_item = item.get("new_item", {})
         title = _value(new_item, "title")
 
+        if decision == "MERGE":
+            # A decision record is append-only: a duplicate title
+            # merges into the existing record instead of creating one.
+            existing, problem = _plan_existing_item(
+                project,
+                Decision,
+                item,
+            )
+
+            if problem:
+                _needs_review_event(
+                    project,
+                    meeting,
+                    "decision",
+                    item,
+                    problem,
+                )
+            else:
+                _event(
+                    project.id,
+                    meeting.id,
+                    "decision",
+                    existing.id,
+                    "merged",
+                    (
+                        f"Merged duplicate decision: {existing.title}. "
+                        f"Reason: {_value(item, 'reason') or '(no reason given)'}"
+                    ),
+                )
+
+            continue
+
         if decision != "CREATE":
-            # Decisions are append-only records: the plan can only
-            # create them. Anything else is preserved for review.
+            # Decisions are append-only records: the plan can create
+            # or merge them. Anything else is preserved for review.
             _needs_review_event(
                 project,
                 meeting,
@@ -917,7 +956,9 @@ def apply_consolidation_plan(
                 "unsupported_decision",
             )
 
-        elif not title:
+            continue
+
+        if not title:
             _needs_review_event(
                 project,
                 meeting,
@@ -926,49 +967,52 @@ def apply_consolidation_plan(
                 "missing_title",
             )
 
-        else:
-            duplicate_decision_id = created_decisions.get(normalize_title(title))
+            continue
 
-            if duplicate_decision_id is not None:
-                _event(
-                    project.id,
-                    meeting.id,
-                    "decision",
-                    duplicate_decision_id,
-                    "merged",
-                    (
-                        f"Merged duplicate decision: {title} "
-                        f"(duplicate CREATE within the same plan)."
-                    ),
-                )
+        duplicate_decision_id = created_decisions.get(normalize_title(title))
 
-            else:
-                decision_record = Decision(
-                    project_id=project.id,
-                    title=title,
-                    details=_value(
-                        new_item,
-                        "details",
-                    ),
-                    created_in_meeting_id=meeting.id,
-                )
+        if duplicate_decision_id is not None:
+            _event(
+                project.id,
+                meeting.id,
+                "decision",
+                duplicate_decision_id,
+                "merged",
+                (
+                    f"Merged duplicate decision: {title} "
+                    f"(duplicate CREATE within the same plan)."
+                ),
+            )
 
-                db.session.add(decision_record)
-                db.session.flush()
+            continue
 
-                created_decisions[normalize_title(title)] = decision_record.id
+        decision_record = Decision(
+            project_id=project.id,
+            title=title,
+            canonical_title=normalize_title(title),
+            details=_value(
+                new_item,
+                "details",
+            ),
+            created_in_meeting_id=meeting.id,
+        )
 
-                _event(
-                    project.id,
-                    meeting.id,
-                    "decision",
-                    decision_record.id,
-                    "created",
-                    (
-                        f"Recorded decision: "
-                        f"{title} (via consolidation)"
-                    ),
-                )
+        db.session.add(decision_record)
+        db.session.flush()
+
+        created_decisions[normalize_title(title)] = decision_record.id
+
+        _event(
+            project.id,
+            meeting.id,
+            "decision",
+            decision_record.id,
+            "created",
+            (
+                f"Recorded decision: "
+                f"{title} (via consolidation)"
+            ),
+        )
 
 
 def apply_state(project, meeting, analysis):
@@ -1023,9 +1067,28 @@ def apply_meeting_analysis(
         title = _value(item, "title")
 
         if title:
+            # Idempotency for the fallback path: a decision whose
+            # canonical title already exists is merged, not duplicated.
+            existing_decision = Decision.query.filter_by(
+                project_id=project.id,
+                canonical_title=normalize_title(title),
+            ).first()
+
+            if existing_decision is not None:
+                _event(
+                    project.id,
+                    meeting.id,
+                    "decision",
+                    existing_decision.id,
+                    "merged",
+                    f"Merged duplicate decision: {existing_decision.title}",
+                )
+                continue
+
             decision = Decision(
                 project_id=project.id,
                 title=title,
+                canonical_title=normalize_title(title),
                 details=_value(
                     item,
                     "details",

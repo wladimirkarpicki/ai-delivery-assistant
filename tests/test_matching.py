@@ -88,17 +88,92 @@ class PreMatchTests(unittest.TestCase):
         self.assertEqual(entry["decision"], "UPDATE")
         self.assertEqual(entry["new_item"]["status"], "completed")
 
-    def test_decisions_are_never_auto_resolved(self):
+    def test_reopen_resolved_item_auto_updated(self):
+        memory = {
+            "risks": [
+                {
+                    "id": 9,
+                    "title": "QA capacity",
+                    "canonical_title": "qa capacity",
+                    "status": "resolved",
+                }
+            ]
+        }
+
+        result = pre_match(
+            memory,
+            {"risks": [{"title": "QA capacity", "status": "open"}]},
+        )
+
+        entry = result["auto"]["risks"][0]
+        self.assertEqual(entry["decision"], "UPDATE")
+        self.assertEqual(entry["existing_item_id"], 9)
+        self.assertEqual(entry["new_item"]["status"], "open")
+        self.assertEqual(result["llm_findings"]["risks"], [])
+
+    def test_already_resolved_item_mentioned_again_merges(self):
+        memory = {
+            "risks": [
+                {"id": 9, "title": "QA capacity", "status": "resolved"}
+            ]
+        }
+
+        result = pre_match(
+            memory,
+            {"risks": [{"title": "QA capacity", "status": "resolved"}]},
+        )
+
+        entry = result["auto"]["risks"][0]
+        self.assertEqual(entry["decision"], "MERGE")
+
+    def test_finding_without_status_never_flips(self):
+        memory = {
+            "risks": [
+                {"id": 9, "title": "QA capacity", "status": "resolved"}
+            ]
+        }
+
+        result = pre_match(
+            memory,
+            {"risks": [{"title": "QA capacity", "description": "x"}]},
+        )
+
+        entry = result["auto"]["risks"][0]
+        self.assertEqual(entry["decision"], "MERGE")
+
+    def test_canonical_title_drives_identity(self):
+        memory = {
+            "risks": [
+                {
+                    "id": 9,
+                    "title": "Legacy QA worry",
+                    "canonical_title": "qa capacity",
+                    "status": "open",
+                }
+            ]
+        }
+
+        result = pre_match(
+            memory,
+            {"risks": [{"title": "QA capacity", "status": "open"}]},
+        )
+
+        entry = result["auto"]["risks"][0]
+        self.assertEqual(entry["decision"], "MERGE")
+        self.assertEqual(entry["existing_item_id"], 9)
+
+    def test_duplicate_decisions_auto_merge_without_llm(self):
         result = pre_match(
             MEMORY,
             {"decisions": [{"title": "Adopt flow", "details": "d"}]},
         )
 
-        self.assertNotIn("decisions", result["auto"])
-
-        # The duplicate decision goes to the LLM with its candidate.
-        finding = result["llm_findings"]["decisions"][0]
-        self.assertEqual(finding["candidate_ids"], [5])
+        # The duplicate decision merges deterministically into the
+        # existing append-only record.
+        entry = result["auto"]["decisions"][0]
+        self.assertEqual(entry["decision"], "MERGE")
+        self.assertEqual(entry["existing_item_id"], 5)
+        self.assertEqual(result["llm_findings"]["decisions"], [])
 
     def test_unmatched_finding_gets_empty_candidates(self):
         result = pre_match(
@@ -195,6 +270,45 @@ class DowngradeTests(unittest.TestCase):
 
         self.assertEqual(downgrade_create_duplicates(MEMORY, plan), 0)
         self.assertEqual(plan["risks"][0]["decision"], "CREATE")
+
+    def test_downgrade_covers_decisions_and_resolved_items(self):
+        memory = {
+            "risks": [
+                {
+                    "id": 9,
+                    "title": "QA capacity",
+                    "canonical_title": "qa capacity",
+                    "status": "resolved",
+                }
+            ],
+            "decisions": [
+                {
+                    "id": 5,
+                    "title": "Adopt flow",
+                    "canonical_title": "adopt flow",
+                }
+            ],
+        }
+        plan = {
+            "risks": [
+                {
+                    "decision": "CREATE",
+                    "new_item": {"title": "QA capacity", "status": "open"},
+                }
+            ],
+            "decisions": [
+                {
+                    "decision": "CREATE",
+                    "new_item": {"title": "Adopt Flow"},
+                }
+            ],
+        }
+
+        self.assertEqual(downgrade_create_duplicates(memory, plan), 2)
+        self.assertEqual(plan["risks"][0]["decision"], "MERGE")
+        self.assertEqual(plan["risks"][0]["existing_item_id"], 9)
+        self.assertEqual(plan["decisions"][0]["decision"], "MERGE")
+        self.assertEqual(plan["decisions"][0]["existing_item_id"], 5)
 
     def test_combine_plans_merges_sections(self):
         combined = combine_plans(

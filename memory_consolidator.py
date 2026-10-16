@@ -61,6 +61,13 @@ Important rules:
     decisions, existing_item_id MUST be one of that finding's
     candidate_ids. If candidate_ids is empty or absent, treat the
     finding as new and use CREATE.
+12. The existing memory includes resolved and completed items with
+    their status. They are still valid MERGE/UPDATE targets: a finding
+    that says such an item is open again means it was reopened, and a
+    finding that adds information about it means UPDATE.
+13. Decisions are append-only: when a new decision duplicates an
+    existing one, use MERGE (never UPDATE) with the existing decision's
+    id from candidate_ids.
 
 Return exactly this structure:
 

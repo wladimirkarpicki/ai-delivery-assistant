@@ -291,6 +291,7 @@ class FlaskAppTests(unittest.TestCase):
         with self.app.app_context():
             risk = Risk.query.one()
             self.assertEqual(risk.title, "Deployment risk")
+            self.assertEqual(risk.canonical_title, "deployment risk")
 
             # The fallback path still applies the project state.
             project = db.session.get(Project, project_id)
@@ -326,10 +327,13 @@ class FlaskAppTests(unittest.TestCase):
             },
         ]
 
-        for title in ("Weekly 1", "Weekly 2"):
+        for title, notes in (
+            ("Weekly 1", "API instability raised"),
+            ("Weekly 2", "API instability follow-up"),
+        ):
             response = self.client.post(
                 f"/projects/{project_id}/meetings/new",
-                data={"title": title, "meeting_notes": "API instability"},
+                data={"title": title, "meeting_notes": notes},
             )
             self.assertEqual(response.status_code, 302)
 
@@ -406,6 +410,149 @@ class FlaskAppTests(unittest.TestCase):
                 event.summary for event in HistoryEvent.query.all()
             )
             self.assertIn("duplicate CREATE within the same plan", summaries)
+
+
+    def test_identical_meeting_notes_are_rejected(self):
+        project_id = self.create_project()
+        self.router.responses = [
+            {
+                "executive_summary": "QA constrained.", "project_status": "at_risk", "progress_summary": "Tight.",
+                "completed_items": [], "in_progress_items": [],
+                "risks": [{"title": "QA capacity", "status": "open"}],
+                "blockers": [], "decisions": [], "action_items": [],
+            },
+            {
+                "risks": [{"decision": "CREATE", "new_item": {"title": "QA capacity", "status": "open"}, "reason": "new"}],
+                "blockers": [], "action_items": [], "decisions": [],
+            },
+        ]
+
+        first = self.client.post(
+            f"/projects/{project_id}/meetings/new",
+            data={"title": "Weekly", "meeting_notes": "QA capacity discussed"},
+        )
+        self.assertEqual(first.status_code, 302)
+
+        second = self.client.post(
+            f"/projects/{project_id}/meetings/new",
+            data={"title": "Weekly again", "meeting_notes": "QA capacity discussed"},
+        )
+
+        # Re-submitting identical notes is rejected without an LLM call.
+        self.assertEqual(second.status_code, 200)
+        self.assertIn(b"Identical meeting notes already exist", second.data)
+        self.assertEqual(self.router.responses, [])
+
+        with self.app.app_context():
+            self.assertEqual(Meeting.query.count(), 1)
+            self.assertEqual(Risk.query.count(), 1)
+            self.assertEqual(HistoryEvent.query.count(), 2)
+
+    def test_resolved_risk_reopened_without_duplicate(self):
+        project_id = self.create_project()
+        self.router.responses = [
+            {
+                "executive_summary": "QA constrained.", "project_status": "at_risk", "progress_summary": "Tight.",
+                "completed_items": [], "in_progress_items": [],
+                "risks": [{"title": "QA capacity", "status": "open"}],
+                "blockers": [], "decisions": [], "action_items": [],
+            },
+            {
+                "risks": [{"decision": "CREATE", "new_item": {"title": "QA capacity", "status": "open"}, "reason": "new"}],
+                "blockers": [], "action_items": [], "decisions": [],
+            },
+            {
+                "executive_summary": "QA resolved.", "project_status": "on_track", "progress_summary": "Staffed.",
+                "completed_items": [], "in_progress_items": [],
+                "risks": [{"title": "QA capacity", "status": "resolved"}],
+                "blockers": [], "decisions": [], "action_items": [],
+            },
+            {
+                "executive_summary": "QA slipped again.", "project_status": "at_risk", "progress_summary": "Tight.",
+                "completed_items": [], "in_progress_items": [],
+                "risks": [{"title": "QA capacity", "status": "open"}],
+                "blockers": [], "decisions": [], "action_items": [],
+            },
+        ]
+
+        for title, notes in (
+            ("Weekly 1", "QA capacity raised"),
+            ("Weekly 2", "QA capacity resolved"),
+            ("Weekly 3", "QA capacity reopened"),
+        ):
+            response = self.client.post(
+                f"/projects/{project_id}/meetings/new",
+                data={"title": title, "meeting_notes": notes},
+            )
+            self.assertEqual(response.status_code, 302)
+
+        # Both flips were deterministic: only the first meeting used
+        # the LLM for consolidation.
+        self.assertEqual(self.router.responses, [])
+
+        with self.app.app_context():
+            # One canonical row across open -> resolved -> reopened.
+            self.assertEqual(Risk.query.count(), 1)
+
+            risk = Risk.query.one()
+            self.assertEqual(risk.status, "open")
+            self.assertIsNone(risk.resolved_at)
+            self.assertEqual(risk.canonical_title, "qa capacity")
+
+            summaries = " | ".join(
+                event.summary for event in HistoryEvent.query.all()
+            )
+            self.assertEqual(
+                summaries.count("Updated risk: QA capacity"), 2
+            )
+
+    def test_duplicate_decision_across_meetings_merged(self):
+        project_id = self.create_project()
+        self.router.responses = [
+            {
+                "executive_summary": "Flow agreed.", "project_status": "on_track", "progress_summary": "Steady.",
+                "completed_items": [], "in_progress_items": [],
+                "risks": [], "blockers": [],
+                "decisions": [{"title": "Adopt flow", "details": "official"}],
+                "action_items": [],
+            },
+            {
+                "risks": [], "blockers": [], "action_items": [],
+                "decisions": [{"decision": "CREATE", "new_item": {"title": "Adopt flow", "details": "official"}, "reason": "new decision"}],
+            },
+            {
+                "executive_summary": "Flow confirmed.", "project_status": "on_track", "progress_summary": "Steady.",
+                "completed_items": [], "in_progress_items": [],
+                "risks": [], "blockers": [],
+                "decisions": [{"title": "Adopt Flow", "details": "repeated"}],
+                "action_items": [],
+            },
+        ]
+
+        for title, notes in (
+            ("Weekly 1", "decision recorded"),
+            ("Weekly 2", "decision confirmed"),
+        ):
+            response = self.client.post(
+                f"/projects/{project_id}/meetings/new",
+                data={"title": title, "meeting_notes": notes},
+            )
+            self.assertEqual(response.status_code, 302)
+
+        with self.app.app_context():
+            self.assertEqual(Decision.query.count(), 1)
+
+            decision = Decision.query.one()
+            self.assertEqual(decision.canonical_title, "adopt flow")
+
+            summaries = " | ".join(
+                event.summary for event in HistoryEvent.query.all()
+            )
+            self.assertIn(
+                "Merged duplicate decision: Adopt flow. "
+                "Reason: deterministic pre-match: duplicate decision title",
+                summaries,
+            )
 
 
 if __name__ == "__main__":

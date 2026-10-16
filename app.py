@@ -25,53 +25,59 @@ def get_available_models(router):
 
 
 def get_project_memory(project_id):
-    """Extract the current project memory from the database."""
+    """
+    Extract the current project memory from the database.
+
+    All statuses are included, not only open ones: a resolved risk
+    re-mentioned in a later meeting is the same canonical entity and
+    must be reopened rather than duplicated.
+    """
     memory = {
         "risks": [],
         "blockers": [],
         "action_items": [],
         "decisions": []
     }
-    
-    # Get open risks
-    for risk in Risk.query.filter_by(project_id=project_id, status="open").all():
+
+    for risk in Risk.query.filter_by(project_id=project_id).all():
         memory["risks"].append({
             "id": risk.id,
             "title": risk.title,
+            "canonical_title": risk.canonical_title,
             "description": risk.description,
             "impact": risk.impact,
             "mitigation": risk.mitigation,
             "status": risk.status
         })
-    
-    # Get open blockers
-    for blocker in Blocker.query.filter_by(project_id=project_id, status="open").all():
+
+    for blocker in Blocker.query.filter_by(project_id=project_id).all():
         memory["blockers"].append({
             "id": blocker.id,
             "title": blocker.title,
+            "canonical_title": blocker.canonical_title,
             "description": blocker.description,
             "status": blocker.status
         })
-    
-    # Get open action items
-    for action in ActionItem.query.filter_by(project_id=project_id, status="open").all():
+
+    for action in ActionItem.query.filter_by(project_id=project_id).all():
         memory["action_items"].append({
             "id": action.id,
             "title": action.title,
+            "canonical_title": action.canonical_title,
             "details": action.details,
             "owner": action.owner,
             "due_date": action.due_date.isoformat() if action.due_date else None,
             "status": action.status
         })
-    
-    # Get decisions
+
     for decision in Decision.query.filter_by(project_id=project_id).all():
         memory["decisions"].append({
             "id": decision.id,
             "title": decision.title,
+            "canonical_title": decision.canonical_title,
             "details": decision.details
         })
-    
+
     return memory
 
 
@@ -155,6 +161,22 @@ def create_app(router_instance=None, database_url=None):
                     original_text, source_filename = notes.strip(), None
                 else:
                     raise ValueError("Upload meeting notes or paste meeting text.")
+
+                # Idempotency: re-submitting identical notes is a
+                # no-op rather than a second memory mutation.
+                duplicate_meeting = Meeting.query.filter_by(
+                    project_id=project.id,
+                    original_text=original_text,
+                ).first()
+
+                if duplicate_meeting is not None:
+                    raise ValueError(
+                        f"Identical meeting notes already exist "
+                        f"({duplicate_meeting.title}, "
+                        f"{duplicate_meeting.created_at:%Y-%m-%d}). "
+                        f"No changes were applied."
+                    )
+
                 if not selected_model:
                     raise ValueError("No supported models are currently available.")
                 analysis_text = analyze_document(original_text, DEFAULT_PROVIDER, selected_model, router)
