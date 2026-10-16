@@ -212,6 +212,73 @@ def create_app(router_instance=None, database_url=None):
                 return redirect(url_for("project_overview", project_id=project.id))
         return render_template("projects.html", projects=Project.query.order_by(Project.updated_at.desc()).all())
 
+    @app.post("/projects/<int:project_id>/items/<item_type>/<int:item_id>/resolve")
+    def manual_item_resolve(project_id, item_type, item_id):
+        from datetime import datetime, timezone
+        project = db.session.get(Project, project_id) or abort(404)
+        action = request.form.get("action", "resolve").strip().lower()
+        note = request.form.get("note", "").strip()
+        entity_map = {
+            "risk": ("risk", Risk, "resolved", "resolved_at", "resolved_in_meeting_id"),
+            "blocker": ("blocker", Blocker, "resolved", "resolved_at", "resolved_in_meeting_id"),
+            "action_item": ("action_item", ActionItem, "completed", "completed_at", "completed_in_meeting_id"),
+        }
+        if item_type not in entity_map:
+            abort(404)
+        entity_type, model_class, target_status, time_col, meeting_col = entity_map[item_type]
+        item = db.session.get(model_class, item_id)
+        if item is None or item.project_id != project.id:
+            abort(404)
+        latest_meeting_id = db.session.scalar(
+            db.select(Meeting.id)
+            .filter_by(project_id=project.id)
+            .order_by(Meeting.created_at.desc())
+            .limit(1)
+        )
+        if action == "resolve":
+            if item.status == target_status:
+                flash(f"{item.title} is already {target_status}.", "warning")
+            else:
+                item.status = target_status
+                setattr(item, time_col, datetime.now(timezone.utc))
+                setattr(item, meeting_col, None)
+                db.session.commit()
+                db.session.add(HistoryEvent(
+                    project_id=project.id,
+                    meeting_id=latest_meeting_id,
+                    entity_type=entity_type,
+                    entity_id=item.id,
+                    event_type="manual_resolve",
+                    summary=f"Manually resolved {entity_type}: {item.title}",
+                    after_data={"status": target_status, "note": note},
+                    created_at=datetime.now(timezone.utc),
+                ))
+                db.session.commit()
+                flash(f"{entity_type.title()} resolved: {item.title}", "success")
+        elif action == "reopen":
+            if item.status == "open":
+                flash(f"{item.title} is already open.", "warning")
+            else:
+                item.status = "open"
+                setattr(item, time_col, None)
+                setattr(item, meeting_col, None)
+                db.session.commit()
+                db.session.add(HistoryEvent(
+                    project_id=project.id,
+                    meeting_id=latest_meeting_id,
+                    entity_type=entity_type,
+                    entity_id=item.id,
+                    event_type="manual_reopen",
+                    summary=f"Manually reopened {entity_type}: {item.title}",
+                    after_data={"status": "open", "note": note},
+                    created_at=datetime.now(timezone.utc),
+                ))
+                db.session.commit()
+                flash(f"{entity_type.title()} reopened: {item.title}", "success")
+        else:
+            flash("Unknown action.", "error")
+        return redirect(url_for("project_overview", project_id=project.id))
+
     @app.get("/projects/<int:project_id>")
     def project_overview(project_id):
         project = db.session.get(Project, project_id) or abort(404)
@@ -220,7 +287,16 @@ def create_app(router_instance=None, database_url=None):
             .filter(~HistoryEvent.review_resolution.has())
             .count()
         )
-        return render_template("project_overview.html", project=project, risks=Risk.query.filter_by(project_id=project.id, status="open").order_by(Risk.id.desc()).all(), blockers=Blocker.query.filter_by(project_id=project.id, status="open").order_by(Blocker.id.desc()).all(), actions=ActionItem.query.filter_by(project_id=project.id, status="open").order_by(ActionItem.id.desc()).all(), meeting_count=Meeting.query.filter_by(project_id=project.id).count(), needs_review_count=needs_review_count)
+        return render_template("project_overview.html",
+            project=project,
+            risks=Risk.query.filter_by(project_id=project.id, status="open").order_by(Risk.id.desc()).all(),
+            resolved_risks=Risk.query.filter_by(project_id=project.id, status="resolved").order_by(Risk.id.desc()).all(),
+            blockers=Blocker.query.filter_by(project_id=project.id, status="open").order_by(Blocker.id.desc()).all(),
+            resolved_blockers=Blocker.query.filter_by(project_id=project.id, status="resolved").order_by(Blocker.id.desc()).all(),
+            actions=ActionItem.query.filter_by(project_id=project.id, status="open").order_by(ActionItem.id.desc()).all(),
+            completed_actions=ActionItem.query.filter_by(project_id=project.id, status="completed").order_by(ActionItem.id.desc()).all(),
+            meeting_count=Meeting.query.filter_by(project_id=project.id).count(),
+            needs_review_count=needs_review_count)
 
     @app.get("/projects/<int:project_id>/meetings")
     def project_meetings(project_id):

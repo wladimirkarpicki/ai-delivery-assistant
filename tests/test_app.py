@@ -990,6 +990,172 @@ class FlaskAppTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"No structured analysis stored", page.data)
 
+    def _seed_risk(self, project_id, title="Vendor API quota exhaustion", meeting_id=None):
+        with self.app.app_context():
+            risk = Risk(
+                project_id=project_id,
+                title=title,
+                canonical_title=title.lower(),
+                description="Rate limit hit.",
+                impact="high",
+                status="open",
+                created_in_meeting_id=meeting_id,
+                updated_in_meeting_id=meeting_id,
+            )
+            db.session.add(risk)
+            db.session.commit()
+            return risk.id
+
+    def test_manual_resolve_and_reopen_risk(self):
+        project_id = self.create_project()
+        # History events and item rows both require an anchor meeting
+        # (meeting_id / created_in_meeting_id are NOT NULL): manual
+        # actions are recorded against the latest meeting.
+        meeting_id = self._seed_meeting(project_id, {})
+        risk_id = self._seed_risk(project_id, meeting_id=meeting_id)
+
+        response = self.client.post(
+            f"/projects/{project_id}/items/risk/{risk_id}/resolve",
+            data={"action": "resolve"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        with self.app.app_context():
+            risk = db.session.get(Risk, risk_id)
+            self.assertEqual(risk.status, "resolved")
+            self.assertIsNotNone(risk.resolved_at)
+            self.assertIsNone(risk.resolved_in_meeting_id)
+
+            event = HistoryEvent.query.filter_by(
+                project_id=project_id,
+                entity_type="risk",
+                event_type="manual_resolve",
+            ).one()
+            self.assertIn("Vendor API quota exhaustion", event.summary)
+            self.assertEqual(event.after_data["status"], "resolved")
+
+        response = self.client.post(
+            f"/projects/{project_id}/items/risk/{risk_id}/resolve",
+            data={"action": "reopen"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        with self.app.app_context():
+            risk = db.session.get(Risk, risk_id)
+            self.assertEqual(risk.status, "open")
+            self.assertIsNone(risk.resolved_at)
+
+            event = HistoryEvent.query.filter_by(
+                project_id=project_id,
+                entity_type="risk",
+                event_type="manual_reopen",
+            ).one()
+            self.assertIn("Vendor API quota exhaustion", event.summary)
+
+    def test_manual_resolve_is_idempotent(self):
+        project_id = self.create_project()
+        meeting_id = self._seed_meeting(project_id, {})
+        risk_id = self._seed_risk(project_id, meeting_id=meeting_id)
+
+        # First resolve flips the status.
+        first = self.client.post(
+            f"/projects/{project_id}/items/risk/{risk_id}/resolve",
+            data={"action": "resolve"},
+            follow_redirects=True,
+        )
+        self.assertEqual(first.status_code, 200)
+
+        # A second resolve is a no-op with a warning flash, not an
+        # error and not a duplicate history event.
+        second = self.client.post(
+            f"/projects/{project_id}/items/risk/{risk_id}/resolve",
+            data={"action": "resolve"},
+            follow_redirects=True,
+        )
+        self.assertEqual(second.status_code, 200)
+        self.assertIn(b"already resolved", second.data)
+
+        with self.app.app_context():
+            events = HistoryEvent.query.filter_by(
+                project_id=project_id,
+                entity_type="risk",
+                event_type="manual_resolve",
+            ).all()
+            self.assertEqual(len(events), 1)
+
+    def test_manual_complete_action_item(self):
+        project_id = self.create_project()
+        meeting_id = self._seed_meeting(project_id, {})
+
+        with self.app.app_context():
+            action = ActionItem(
+                project_id=project_id,
+                title="Chase vendor",
+                canonical_title="chase vendor",
+                details="Email support",
+                status="open",
+                created_in_meeting_id=meeting_id,
+                updated_in_meeting_id=meeting_id,
+            )
+            db.session.add(action)
+            db.session.commit()
+            action_id = action.id
+
+        response = self.client.post(
+            f"/projects/{project_id}/items/action_item/{action_id}/resolve",
+            data={"action": "resolve"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        with self.app.app_context():
+            action = db.session.get(ActionItem, action_id)
+            self.assertEqual(action.status, "completed")
+            self.assertIsNotNone(action.completed_at)
+            self.assertIsNone(action.completed_in_meeting_id)
+
+            event = HistoryEvent.query.filter_by(
+                project_id=project_id,
+                entity_type="action_item",
+                event_type="manual_resolve",
+            ).one()
+            self.assertIn("Chase vendor", event.summary)
+
+    def test_manual_resolve_unknown_item_type_returns_404(self):
+        project_id = self.create_project()
+        meeting_id = self._seed_meeting(project_id, {})
+        risk_id = self._seed_risk(project_id, meeting_id=meeting_id)
+
+        response = self.client.post(
+            f"/projects/{project_id}/items/decision/{risk_id}/resolve",
+            data={"action": "resolve"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_manual_resolve_rejects_item_of_other_project(self):
+        project_id = self.create_project()
+        self.client.post("/projects", data={"name": "Orion", "description": "Other project"})
+        with self.app.app_context():
+            other_project_id = db.session.scalar(db.select(Project).filter_by(name="Orion")).id
+        risk_id = self._seed_risk(project_id, meeting_id=self._seed_meeting(project_id, {}))
+
+        response = self.client.post(
+            f"/projects/{other_project_id}/items/risk/{risk_id}/resolve",
+            data={"action": "resolve"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+        with self.app.app_context():
+            risk = db.session.get(Risk, risk_id)
+            self.assertEqual(risk.status, "open")
+
 
 if __name__ == "__main__":
     unittest.main()

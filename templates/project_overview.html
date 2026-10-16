@@ -47,7 +47,7 @@
 </section>
 
 
-<div class="cards" aria-label="Open delivery work">
+<div class="cards" aria-label="Delivery work">
 
     <section class="panel">
         <h2>Open risks</h2>
@@ -65,6 +65,37 @@
                         · Mitigation: {{ item.mitigation }}
                     {% endif %}
                 </small>
+
+                <form method="post"
+                      action="{{ url_for('manual_item_resolve', project_id=project.id, item_type='risk', item_id=item.id) }}"
+                      class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" name="action" value="resolve">Resolve</button>
+                </form>
+            </article>
+        {% else %}
+            <p>None.</p>
+        {% endfor %}
+    </section>
+
+
+    <section class="panel">
+        <h2>Resolved risks</h2>
+
+        {% for item in resolved_risks %}
+            <article>
+                <strong>{{ item.title }}</strong>
+
+                <small>
+                    Resolved {{ item.resolved_at.strftime('%Y-%m-%d') if item.resolved_at }}
+                </small>
+
+                <form method="post"
+                      action="{{ url_for('manual_item_resolve', project_id=project.id, item_type='risk', item_id=item.id) }}"
+                      class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" name="action" value="reopen">Reopen</button>
+                </form>
             </article>
         {% else %}
             <p>None.</p>
@@ -80,6 +111,37 @@
                 <strong>{{ item.title }}</strong>
 
                 <p>{{ item.description }}</p>
+
+                <form method="post"
+                      action="{{ url_for('manual_item_resolve', project_id=project.id, item_type='blocker', item_id=item.id) }}"
+                      class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" name="action" value="resolve">Resolve</button>
+                </form>
+            </article>
+        {% else %}
+            <p>None.</p>
+        {% endfor %}
+    </section>
+
+
+    <section class="panel">
+        <h2>Resolved blockers</h2>
+
+        {% for item in resolved_blockers %}
+            <article>
+                <strong>{{ item.title }}</strong>
+
+                <small>
+                    Resolved {{ item.resolved_at.strftime('%Y-%m-%d') if item.resolved_at }}
+                </small>
+
+                <form method="post"
+                      action="{{ url_for('manual_item_resolve', project_id=project.id, item_type='blocker', item_id=item.id) }}"
+                      class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" name="action" value="reopen">Reopen</button>
+                </form>
             </article>
         {% else %}
             <p>None.</p>
@@ -101,6 +163,37 @@
                         · due {{ item.due_date }}
                     {% endif %}
                 </p>
+
+                <form method="post"
+                      action="{{ url_for('manual_item_resolve', project_id=project.id, item_type='action_item', item_id=item.id) }}"
+                      class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" name="action" value="resolve">Complete</button>
+                </form>
+            </article>
+        {% else %}
+            <p>None.</p>
+        {% endfor %}
+    </section>
+
+
+    <section class="panel">
+        <h2>Completed actions</h2>
+
+        {% for item in completed_actions %}
+            <article>
+                <strong>{{ item.title }}</strong>
+
+                <small>
+                    Completed {{ item.completed_at.strftime('%Y-%m-%d') if item.completed_at }}
+                </small>
+
+                <form method="post"
+                      action="{{ url_for('manual_item_resolve', project_id=project.id, item_type='action_item', item_id=item.id) }}"
+                      class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" name="action" value="reopen">Reopen</button>
+                </form>
             </article>
         {% else %}
             <p>None.</p>
