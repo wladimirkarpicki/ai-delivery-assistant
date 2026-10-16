@@ -26,6 +26,8 @@ The project is designed around a practical delivery-management problem: **the sa
 - Persistent project memory backed by PostgreSQL
 - AI-driven memory consolidation
 - Deterministic pre-matching: exact title duplicates are resolved without the LLM; remaining findings carry a candidate shortlist
+- Canonical titles as item identity: one row per title per project (enforced by unique indexes); resolved items reopen instead of duplicating
+- Idempotent uploads: submitting identical meeting notes is a no-op with an explicit warning
 - Consolidation decisions for new findings:
   - **CREATE** — genuinely new information
   - **MERGE** — same underlying information with different wording
@@ -106,7 +108,9 @@ MemoryConsolidator
 Project memory + history
 ```
 
-Before anything reaches the LLM, `matching.py` resolves findings that exactly match an existing open item by normalized title: unchanged duplicates become MERGE entries and explicit status flips become UPDATE entries, without an LLM call. The remaining findings go to `MemoryConsolidator` annotated with a `candidate_ids` shortlist of similar existing items, which keeps the model from inventing ids. After the plan returns, CREATE entries that collide with an existing open title are downgraded to MERGE.
+Before anything reaches the LLM, `matching.py` resolves findings that exactly match an existing item's canonical title — including resolved and completed items: unchanged duplicates become MERGE entries, explicit status changes become UPDATE entries (closing or reopening), and duplicate decisions merge into the existing append-only record, all without an LLM call. The remaining findings go to `MemoryConsolidator` annotated with a `candidate_ids` shortlist of similar existing items, which keeps the model from inventing ids. After the plan returns, CREATE entries that collide with an existing canonical title are downgraded to MERGE.
+
+Every memory item stores a `canonical_title` identity column, and partial unique indexes enforce one row per canonical title per project. Re-submitting identical meeting notes is rejected before any AI call, so repeated uploads never mutate memory twice.
 
 `MemoryConsolidator` uses the selected AI provider/model to compare new findings with the existing project memory. Its output is then applied by `project_memory.py`, which keeps the database changes and history events separate from the AI decision layer.
 
@@ -114,7 +118,7 @@ This separation is intentional: the AI proposes a consolidation plan, while the 
 
 ### Current limitation
 
-Title normalization and fuzzy candidate shortlists are deterministic and already catch exact duplicates, but the final CREATE/MERGE/UPDATE/CONFLICT decision is still **LLM-based**. Because LLM output is probabilistic, semantically equivalent items can still occasionally be classified as `CREATE` when their wording is sufficiently different.
+Title normalization, canonical titles, and fuzzy candidate shortlists are deterministic and already catch exact duplicates, but the final CREATE/MERGE/UPDATE/CONFLICT decision is still **LLM-based**. Because LLM output is probabilistic, semantically equivalent items can still occasionally be classified as `CREATE` when their wording is sufficiently different.
 
 For example:
 
@@ -305,8 +309,6 @@ This separation makes the consolidation logic testable independently from the Fl
 Planned improvements include:
 
 - embedding-based semantic similarity
-- stronger idempotency guarantees for repeated processing of the same meeting
-- canonical titles and aliases for project-memory entities
 - expanded automated tests for semantic duplicate scenarios
 - improved handling of consolidation confidence and ambiguous cases
 

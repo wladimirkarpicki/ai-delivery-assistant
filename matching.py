@@ -2,18 +2,21 @@
 Deterministic pre-matching for meeting findings.
 
 Before the LLM consolidation call, findings that exactly match an
-existing open item by normalized title are resolved without the LLM:
+existing item by canonical title are resolved without the LLM:
 
-- unchanged duplicates become MERGE entries
-- explicit status flips (resolved/completed) become UPDATE entries
+- unchanged duplicates (same status, or no status given) become MERGE
+- explicit status changes become UPDATE, in both directions: closing
+  (open -> resolved/completed) and reopening (resolved/completed -> open)
+
+The canonical title is the item identity regardless of its current
+status, so a resolved risk re-mentioned in a later meeting is reopened
+rather than duplicated. Decisions are append-only: an exact title match
+is the same decision and is merged without an LLM call.
 
 The findings that still need the LLM are returned as copies annotated
 with a candidate_ids shortlist of similar existing items, which keeps
 the LLM from inventing ids. After the LLM answers, CREATE entries that
-collide with an existing open title are downgraded to MERGE.
-
-Decisions are never auto-resolved: they are append-only records, and
-the plan applier only supports CREATE for them.
+collide with an existing title are downgraded to MERGE.
 """
 
 import re
@@ -57,14 +60,19 @@ def similarity(tokens_a, tokens_b):
 
 
 def _index_items(items):
-    """Map normalized title -> item for a memory section."""
+    """Map canonical title -> item for a memory section."""
     index = {}
 
     for item in items or []:
         if not isinstance(item, dict):
             continue
 
-        key = normalize_title(item.get("title"))
+        canonical = item.get("canonical_title")
+
+        if not isinstance(canonical, str) or not canonical.strip():
+            canonical = item.get("title")
+
+        key = normalize_title(canonical)
 
         if key and key not in index:
             index[key] = item
@@ -90,11 +98,18 @@ def _find_candidates(items, finding_tokens, limit=CANDIDATE_LIMIT):
     return scored[:limit]
 
 
-def _closing_new_item(section, existing, finding):
-    """A new_item payload for a deterministic status-flip UPDATE."""
-    status = "completed" if section == "action_items" else "resolved"
+def _status_change_new_item(section, existing, finding):
+    """
+    A new_item payload for a deterministic status-change UPDATE.
 
-    new_item = {"title": existing.get("title"), "status": status}
+    The finding's own status is the target state, whether it closes
+    the item (resolved/completed) or reopens it. Non-empty text
+    fields from the finding are carried along.
+    """
+    new_item = {
+        "title": existing.get("title"),
+        "status": finding.get("status"),
+    }
 
     for key in ("description", "details", "impact", "mitigation", "owner"):
         value = finding.get(key)
@@ -183,7 +198,7 @@ def pre_match(existing_memory, analysis):
     {section: [finding copies]}}. The original analysis payload is
     not modified.
     """
-    auto = {section: [] for section in AUTO_SECTIONS}
+    auto = {section: [] for section in ALL_SECTIONS}
     unmatched = {section: [] for section in ALL_SECTIONS}
 
     for section in ALL_SECTIONS:
@@ -196,15 +211,42 @@ def pre_match(existing_memory, analysis):
 
             existing = index.get(normalize_title(finding.get("title")))
 
-            if existing is None or section not in AUTO_SECTIONS:
+            if existing is None:
                 unmatched[section].append(finding)
                 continue
 
-            if finding.get("status") in ("resolved", "completed"):
+            if section == "decisions":
+                # Decisions are append-only: an exact title match is
+                # the same decision, merged without an LLM call.
+                auto[section].append({
+                    "decision": "MERGE",
+                    "existing_item_id": existing.get("id"),
+                    "new_item": {"title": existing.get("title")},
+                    "canonical_title": existing.get("title"),
+                    "reason": (
+                        "deterministic pre-match: duplicate decision title"
+                    ),
+                })
+                continue
+
+            if section not in AUTO_SECTIONS:
+                unmatched[section].append(finding)
+                continue
+
+            finding_status = finding.get("status")
+            existing_status = existing.get("status")
+
+            status_changes = (
+                isinstance(finding_status, str)
+                and finding_status.strip() != ""
+                and finding_status != existing_status
+            )
+
+            if status_changes:
                 auto[section].append({
                     "decision": "UPDATE",
                     "existing_item_id": existing.get("id"),
-                    "new_item": _closing_new_item(section, existing, finding),
+                    "new_item": _status_change_new_item(section, existing, finding),
                     "canonical_title": existing.get("title"),
                     "reason": (
                         "deterministic pre-match: exact title match "
@@ -236,7 +278,7 @@ def has_llm_findings(llm_findings):
 def downgrade_create_duplicates(existing_memory, plan):
     """
     Rewrite CREATE entries whose normalized title collides with an
-    existing open item into MERGE entries.
+    existing item (any status) into MERGE entries.
 
     Returns the number of downgraded entries. Mutates the plan in
     place; the plan applier validates the rewritten entries like any
@@ -244,7 +286,7 @@ def downgrade_create_duplicates(existing_memory, plan):
     """
     downgraded = 0
 
-    for section in AUTO_SECTIONS:
+    for section in ALL_SECTIONS:
         entries = (plan or {}).get(section) or []
         index = _index_items(existing_memory.get(section) or [])
 
@@ -265,7 +307,7 @@ def downgrade_create_duplicates(existing_memory, plan):
             entry["existing_item_id"] = existing.get("id")
             entry["reason"] = (
                 "deterministic duplicate check: CREATE collided "
-                "with an existing open title"
+                "with an existing title"
             )
             downgraded += 1
 
