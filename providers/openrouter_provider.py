@@ -47,6 +47,32 @@ class OpenRouterProvider:
 
         return response.json()["choices"][0]["message"]["content"]
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    def embed_texts(self, model, texts):
+        """
+        Embed a batch of texts. Returns one vector (list of floats) per
+        input text, in the same order.
+        """
+        vectors = []
+
+        for offset in range(0, len(texts), 64):
+            response = httpx.post(
+                f"{BASE_URL}/embeddings",
+                headers=self.headers,
+                json={
+                    "model": model,
+                    "input": list(texts[offset:offset + 64]),
+                },
+                timeout=DEFAULT_TIMEOUT,
+            )
+
+            response.raise_for_status()
+
+            data = response.json()["data"]
+            vectors.extend(item["embedding"] for item in data)
+
+        return vectors
+
     def get_models(self):
         if hasattr(self, '_cached_models'):
             return self._cached_models

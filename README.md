@@ -26,6 +26,7 @@ The project is designed around a practical delivery-management problem: **the sa
 - Persistent project memory backed by PostgreSQL
 - AI-driven memory consolidation
 - Deterministic pre-matching: exact title duplicates are resolved without the LLM; remaining findings carry a candidate shortlist
+- Semantic candidate matching: item and finding title embeddings (bge-m3 via OpenRouter) rank candidates by cosine similarity, so paraphrases with no shared words still reach the LLM as candidates; falls back to lexical similarity if embeddings are unavailable
 - Canonical titles as item identity: one row per title per project (enforced by unique indexes); resolved items reopen instead of duplicating
 - Idempotent uploads: submitting identical meeting notes is a no-op with an explicit warning
 - Review queue: findings the consolidation guardrails reject are surfaced for explicit resolution (create, link to existing, or dismiss) — never silently dropped
@@ -109,7 +110,7 @@ MemoryConsolidator
 Project memory + history
 ```
 
-Before anything reaches the LLM, `matching.py` resolves findings that exactly match an existing item's canonical title — including resolved and completed items: unchanged duplicates become MERGE entries, explicit status changes become UPDATE entries (closing or reopening), and duplicate decisions merge into the existing append-only record, all without an LLM call. The remaining findings go to `MemoryConsolidator` annotated with a `candidate_ids` shortlist of similar existing items, which keeps the model from inventing ids. After the plan returns, CREATE entries that collide with an existing canonical title are downgraded to MERGE.
+Before anything reaches the LLM, `matching.py` resolves findings that exactly match an existing item's canonical title — including resolved and completed items: unchanged duplicates become MERGE entries, explicit status changes become UPDATE entries (closing or reopening), and duplicate decisions merge into the existing append-only record, all without an LLM call. The remaining findings go to `MemoryConsolidator` annotated with a `candidate_ids` shortlist of similar existing items, which keeps the model from inventing ids. Candidates are ranked semantically: item titles carry a stored embedding (baai/bge-m3 via the OpenRouter embeddings endpoint, backfilled lazily on the next meeting after an item is created), each new meeting's finding titles are embedded in one batched call, and candidates are ordered by cosine similarity. When embeddings are unavailable the ranking falls back to lexical token overlap. After the plan returns, CREATE entries that collide with an existing canonical title are downgraded to MERGE.
 
 Every memory item stores a `canonical_title` identity column, and partial unique indexes enforce one row per canonical title per project. Re-submitting identical meeting notes is rejected before any AI call, so repeated uploads never mutate memory twice.
 
@@ -119,7 +120,7 @@ This separation is intentional: the AI proposes a consolidation plan, while the 
 
 ### Current limitation
 
-Title normalization, canonical titles, and fuzzy candidate shortlists are deterministic and already catch exact duplicates, but the final CREATE/MERGE/UPDATE/CONFLICT decision is still **LLM-based**. Because LLM output is probabilistic, semantically equivalent items can still occasionally be classified as `CREATE` when their wording is sufficiently different.
+Title normalization, canonical titles, fuzzy and embedding-based candidate shortlists are deterministic, but the final CREATE/MERGE/UPDATE/CONFLICT decision is still **LLM-based**. Because LLM output is probabilistic, semantically equivalent items can still occasionally be classified as `CREATE` when the model fails to recognize them as such — even when the semantic layer puts the right item in the candidate list.
 
 For example:
 
@@ -129,8 +130,6 @@ Project Memory Relevance Review
 ```
 
 These may represent the same action even when the model fails to recognize them as such.
-
-An embedding-based semantic similarity layer is a planned direction for making consolidation more robust and idempotent.
 
 ## Supported models
 
@@ -202,7 +201,7 @@ database.py            SQLAlchemy and migration configuration
 models.py              PostgreSQL project-memory models
 project_memory.py      Current-state reconciliation and database history
 memory_consolidator.py AI-driven memory consolidation
-matching.py           Deterministic pre-matching and candidate shortlists
+matching.py           Deterministic pre-matching, semantic and lexical candidate shortlists
 document_parser.py     PDF, DOCX, TXT, and Markdown extraction
 config_loader.py       Centralized .env loader
 services/              AI response schemas (`schema_models.py`)
@@ -309,7 +308,6 @@ This separation makes the consolidation logic testable independently from the Fl
 
 Planned improvements include:
 
-- embedding-based semantic similarity
 - expanded automated tests for semantic duplicate scenarios
 
 ## Status
