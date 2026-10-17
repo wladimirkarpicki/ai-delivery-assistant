@@ -7,6 +7,20 @@
 <span class="eyebrow">Evidence trail</span>
 <h1>Project history</h1>
 
+<nav class="subnav" aria-label="History filters">
+    <a href="{{ url_for('project_history', project_id=project.id) }}"
+       {% if not selected_type %}aria-current="page"{% endif %}>
+        All ({{ type_counts.values()|sum }})
+    </a>
+
+    {% for event_type in type_counts.keys()|sort %}
+        <a href="{{ url_for('project_history', project_id=project.id, type=event_type) }}"
+           {% if selected_type == event_type %}aria-current="page"{% endif %}>
+            {{ event_type|replace('_', ' ')|title }} ({{ type_counts[event_type] }})
+        </a>
+    {% endfor %}
+</nav>
+
 <section class="panel">
 
     <ul class="timeline">
@@ -23,8 +37,26 @@
                     {{ event.summary }}
                 </p>
 
+                {% set changes = event|history_changes %}
+                {% if changes %}
+                    <ul class="history-diff">
+                        {% for key, old, new in changes %}
+                            <li>
+                                <small>
+                                    {{ key|replace('_', ' ') }}:
+                                    {{ old if old is not none else '(empty)' }}
+                                    &rarr;
+                                    {{ new if new is not none else '(empty)' }}
+                                </small>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+
                 <small>
-                    Meeting #{{ event.meeting_id }}
+                    <a href="{{ url_for('meeting_detail', meeting_id=event.meeting_id) }}">
+                        Meeting #{{ event.meeting_id }}
+                    </a>
                     ·
                     {{ event.created_at.strftime('%Y-%m-%d %H:%M') }}
                 </small>

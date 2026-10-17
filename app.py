@@ -313,8 +313,28 @@ def create_app(router_instance=None, database_url=None):
     @app.get("/projects/<int:project_id>/history")
     def project_history(project_id):
         project = db.session.get(Project, project_id) or abort(404)
-        events = HistoryEvent.query.filter_by(project_id=project.id).order_by(HistoryEvent.created_at.desc(), HistoryEvent.id.desc()).all()
-        return render_template("history.html", project=project, events=events)
+        selected_type = request.args.get("type", "").strip()
+
+        type_counts = dict(
+            db.session.query(HistoryEvent.event_type, db.func.count(HistoryEvent.id))
+            .filter_by(project_id=project.id)
+            .group_by(HistoryEvent.event_type)
+            .all()
+        )
+
+        query = HistoryEvent.query.filter_by(project_id=project.id)
+
+        if selected_type:
+            query = query.filter_by(event_type=selected_type)
+
+        events = query.order_by(HistoryEvent.created_at.desc(), HistoryEvent.id.desc()).all()
+        return render_template(
+            "history.html",
+            project=project,
+            events=events,
+            type_counts=type_counts,
+            selected_type=selected_type,
+        )
 
     @app.get("/projects/<int:project_id>/report")
     def status_report(project_id):
@@ -332,6 +352,29 @@ def create_app(router_instance=None, database_url=None):
             )
 
         return render_template("report.html", project=project, report=report)
+
+    @app.template_filter("history_changes")
+    def history_changes_filter(event):
+        """
+        Extract scalar field changes (field, old, new) from an event's
+        before/after snapshots. Nested structures (plan items, new
+        items) are skipped: their content is already reflected in the
+        event summary.
+        """
+        before = event.before_data if isinstance(event.before_data, dict) else {}
+        after = event.after_data if isinstance(event.after_data, dict) else {}
+        changes = []
+
+        for key, new_value in after.items():
+            if key not in before or before[key] == new_value:
+                continue
+
+            if isinstance(new_value, (dict, list)) or isinstance(before[key], (dict, list)):
+                continue
+
+            changes.append((key, before[key], new_value))
+
+        return changes
 
     def open_review_events(project):
         return (
