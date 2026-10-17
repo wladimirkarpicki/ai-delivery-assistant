@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="page-heading">
+    <div>
+        <a href="{{ url_for('project_overview', project_id=project.id) }}">← {{ project.name }}</a>
+        <span class="eyebrow">Status report</span>
+        <h1>Status report</h1>
+    </div>
+
+    <a class="button" href="{{ url_for('status_report', project_id=project.id, download=1) }}">
+        Download .md
+    </a>
+</div>
+
+
+<article class="record-page">
+
+    <section class="workspace-section">
+        <pre>{{ report }}</pre>
+    </section>
+
+</article>
+
+{% endblock %}

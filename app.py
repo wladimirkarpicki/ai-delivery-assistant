@@ -1,6 +1,6 @@
 import os
 
-from flask import Flask, abort, flash, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template, request, url_for
 from flask_wtf import CSRFProtect
 
 from analyzer import analyze_document, parse_analysis
@@ -24,6 +24,7 @@ from project_memory import (
     apply_state,
     review_model_class,
 )
+from report import build_status_report
 from router import ModelRouter
 
 def get_available_models(router):
@@ -314,6 +315,23 @@ def create_app(router_instance=None, database_url=None):
         project = db.session.get(Project, project_id) or abort(404)
         events = HistoryEvent.query.filter_by(project_id=project.id).order_by(HistoryEvent.created_at.desc(), HistoryEvent.id.desc()).all()
         return render_template("history.html", project=project, events=events)
+
+    @app.get("/projects/<int:project_id>/report")
+    def status_report(project_id):
+        project = db.session.get(Project, project_id) or abort(404)
+        report = build_status_report(project)
+
+        if request.args.get("download"):
+            return Response(
+                report,
+                mimetype="text/markdown",
+                headers={
+                    "Content-Disposition": "attachment; filename="
+                    f"status-report-{project.id}.md"
+                },
+            )
+
+        return render_template("report.html", project=project, report=report)
 
     def open_review_events(project):
         return (
