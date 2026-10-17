@@ -1,4 +1,4 @@
-﻿# AI Delivery Assistant
+# AI Delivery Assistant
 
 AI-powered meeting-notes analyzer for project and delivery management.
 
@@ -42,8 +42,8 @@ The project is designed around a practical delivery-management problem: **the sa
 - Cross-project dashboard: every project at a glance - delivery status, progress, open risk/blocker/action counts, meeting count, and last meeting date
 - History page with type filters (per-type counts), links from every event to its meeting, and before/after field diffs for changes
 - Immutable history events for memory changes
-- CSRF protection on all forms (Flask-WTF)
-- Custom 404 and 500 error pages
+- React 19 + TypeScript SPA (Vite, Tailwind CSS 4, shadcn/ui with the Solid Glass theme)
+- Command palette (Ctrl+K) and light/dark theme toggle
 - Environment-based API key configuration
 
 ## Project memory architecture
@@ -148,7 +148,12 @@ Free-tier models are fetched live from the OpenRouter API (`router.get_models()`
 
 ```text
                          +------------------+
-                         |   Flask Web UI   |
+                         |  React SPA (Vite)|
+                         +---------+--------+
+                                   |  /api JSON
+                                   v
+                         +------------------+
+                         | FastAPI backend  |
                          +---------+--------+
                                    |
                                    v
@@ -199,32 +204,28 @@ Free-tier models are fetched live from the OpenRouter API (`router.get_models()`
 ## Project structure
 
 ```text
-app.py                 Flask routes and web UI entry point
+api.py                 FastAPI application: JSON API + SPA fallback
 analyzer.py            Meeting-note analysis prompt and orchestration
 config.py              Default provider and model configuration
-database.py            SQLAlchemy and migration configuration
+database.py            SQLAlchemy 2.x engine/session configuration (framework-agnostic)
 models.py              PostgreSQL project-memory models
 project_memory.py      Current-state reconciliation and database history
 memory_consolidator.py AI-driven memory consolidation
-matching.py           Deterministic pre-matching, semantic and lexical candidate shortlists
+matching.py            Deterministic pre-matching, semantic and lexical candidate shortlists
 document_parser.py     PDF, DOCX, TXT, and Markdown extraction
 config_loader.py       Centralized .env loader
 services/              AI response schemas (`schema_models.py`)
 router.py              Provider routing and model discovery
 providers/             OpenRouter client implementation
-templates/             Flask HTML templates
-static/                CSS
 migrations/            Alembic database migrations
+frontend/              React + TypeScript SPA (Vite, Tailwind CSS 4, shadcn/ui, Solid Glass)
 tests/                 Application tests
 ```
 
 ## Technology stack
 
-- **Python**
-- **Flask**
-- **Flask-SQLAlchemy**
-- **Flask-Migrate / Alembic**
-- **PostgreSQL**
+- **Backend:** Python, FastAPI, Uvicorn, SQLAlchemy 2.x, Alembic, PostgreSQL
+- **Frontend:** React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui (Base UI), Solid Glass theme
 - **httpx** for the OpenRouter REST API
 - **python-docx** for DOCX extraction
 - **pypdf** for PDF extraction
@@ -240,12 +241,12 @@ python -m venv venv
 venv\Scripts\Activate.ps1
 ```
 
-Install dependencies (including dev: `black`, `ruff`, `pytest`, `coverage`, `flask-wtf`):
+Install dependencies (including dev: `black`, `ruff`, `pytest`, `coverage`):
 
 ```powershell
 pip install -r requirements.txt
 # Or install dev tools separately
-pip install black ruff pytest coverage flask-wtf
+pip install black ruff pytest coverage
 ```
 
 Create `.env` file (loaded centrally via `config_loader.py`):
@@ -253,7 +254,6 @@ Create `.env` file (loaded centrally via `config_loader.py`):
 ```text
 OPENROUTER_API_KEY=your_openrouter_api_key
 DATABASE_URL=postgresql+psycopg://user:password@localhost/ai-delivery-assistant
-FLASK_SECRET_KEY=replace-this-in-production
 ```
 
 Do not commit `.env` or API keys.
@@ -265,21 +265,30 @@ Create the PostgreSQL database once if it does not already exist.
 Apply the version-controlled schema migrations:
 
 ```powershell
-flask --app app db upgrade
+alembic -c migrations/alembic.ini upgrade head
 ```
 
 ## Run locally
 
-Start the Flask application:
+Build the frontend once (produces `frontend/dist`, which FastAPI serves):
 
 ```powershell
-python app.py
+cd frontend
+pnpm install
+pnpm build
+cd ..
+```
+
+Start the FastAPI application:
+
+```powershell
+python -m uvicorn api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:5000
+http://127.0.0.1:8000
 ```
 
 Then:
@@ -289,15 +298,26 @@ Then:
 3. Upload a PDF/DOCX/TXT/Markdown file or paste meeting notes.
 4. Review the extracted project state and memory changes.
 
-## Testing
+### Frontend development mode
 
-Run the application test suite with:
+For hot reload, run the Vite dev server alongside the API; it proxies `/api` to port 8000:
 
 ```powershell
-python -m unittest discover -s tests
+cd frontend
+pnpm dev
 ```
 
-The repository also includes independent development/testing code for the memory consolidation layer as that feature evolves.
+Open `http://localhost:5173` instead of port 8000 while developing.
+
+## Testing
+
+The framework-independent suites (matching, schemas) run with:
+
+```powershell
+python -m unittest tests.test_matching tests.test_schemas
+```
+
+Porting the HTTP test suite from the former Flask layer to FastAPI's TestClient is planned and tracked separately.
 
 ## Design principles
 
@@ -307,7 +327,7 @@ The project intentionally separates three responsibilities:
 2. **AI consolidation** вЂ” determine how new findings relate to existing project memory.
 3. **Database application** вЂ” apply the selected decision safely and preserve an audit trail.
 
-This separation makes the consolidation logic testable independently from the Flask UI and database workflow, and allows the reconciliation strategy to evolve without replacing the underlying project-memory model.
+This separation makes the consolidation logic testable independently from the HTTP layer and database workflow, and allows the reconciliation strategy to evolve without replacing the underlying project-memory model.
 
 ## Roadmap
 

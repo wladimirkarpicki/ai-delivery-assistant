@@ -1,0 +1,10 @@
+/*
+ * Global stylesheet, per the Solid Glass installation instructions:
+ * Tailwind, the animation library, shadcn's own base layer, and then
+ * the Solid Glass material in place of the colour variables that
+ * `shadcn init` would write (none are defined here on purpose).
+ */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "./solid-glass.css";
