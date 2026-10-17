@@ -391,8 +391,12 @@ article p { margin-top: var(--space-2xs); }
 
 @media (min-width: 40rem) {
   .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .cards { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
-  .cards .panel:nth-child(3) { grid-column: 1 / -1; max-width: 38rem; }
+  /* Equal columns, so panes pair up left-right in DOM order: open
+     work on the left, its resolved counterpart on the right - open
+     risks | resolved risks, open blockers | resolved blockers,
+     open actions | completed actions. Panels in one row stretch to
+     the same height; rows may differ, the columns never do. */
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (min-width: 60rem) {
   .container { padding-top: var(--space-2xl); }
