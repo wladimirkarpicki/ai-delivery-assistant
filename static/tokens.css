@@ -1,54 +1,203 @@
+/*
+ * Solid Glass material for AI Delivery Assistant.
+ * Ported from deeplethe/solid-glass (src/solid-glass.css, MIT) for a
+ * plain-CSS Flask app: no Tailwind, no shadcn - the same tokens and
+ * the same pane recipes, applied by hand.
+ *
+ * Four rules keep it one material (from the original):
+ *   1. The finish is at the edge.  rim + hairline + shadow, never a
+ *                                 gradient across the face.
+ *   2. Heavy, not airy.           neutral grey; the blur softens what
+ *                                 is behind it without boosting colour.
+ *   3. Depth is thickness.         panel (thinnest) < card < popover.
+ *   4. One state.                 hovered, chosen and held-open all
+ *                                 wear the same small pane of glass.
+ *
+ * Dark is the material as designed; light is the same panes in
+ * daylight. Dark follows data-theme="dark" on <html> (the pre-paint
+ * script in base.html sets it).
+ */
+
 :root {
   color-scheme: light;
-  --color-paper: oklch(98.5% 0.004 250);
-  --color-paper-2: oklch(95.5% 0.008 250);
-  --color-ink: oklch(24% 0.02 258);
-  --color-ink-2: oklch(34% 0.018 257);
-  --color-muted: oklch(48% 0.014 257);
-  --color-rule: oklch(89% 0.01 252);
-  --color-rule-2: oklch(82% 0.015 252);
-  --color-accent: oklch(46% 0.19 258);
-  --color-accent-ink: oklch(99% 0.002 250);
-  --color-focus: oklch(42% 0.21 258);
-  --color-graphite: oklch(22% 0.016 260);
-  --color-graphite-2: oklch(29% 0.018 260);
-  --color-graphite-ink: oklch(99% 0.002 250);
-  --color-success: oklch(42% 0.12 150);
-  --color-success-bg: oklch(94% 0.035 150);
-  --color-error: oklch(48% 0.17 27);
-  --color-error-bg: oklch(95% 0.03 27);
-  --font-display: "Space Grotesk", ui-sans-serif, sans-serif;
-  --font-body: "IBM Plex Sans", ui-sans-serif, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* The page is opaque, a cool grey deep enough for a pane to stand
+     out on; the panes on it are smoked white glass, not paper. */
+  --background: oklch(0.925 0.007 265);
+  --foreground: oklch(0.16 0 0);
+
+  /* Thickness: panel < card < popover. Thicker is more opaque. */
+  --panel: oklch(0.975 0.004 265 / 44%);
+  --card: oklch(0.98 0.004 265 / 60%);
+  --popover: oklch(0.985 0.003 265 / 96%);
+  --popover-foreground: oklch(0.16 0 0);
+
+  --primary: oklch(0.2 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.3 0.02 265 / 7%);
+  --muted-foreground: oklch(0.47 0 0);
+  --border: oklch(0.3 0.02 265 / 13%);
+  --destructive: oklch(0.577 0.245 27.325);
+  --success: oklch(0.58 0.15 152);
+
+  /* The finish. Rim: the line of light on a pane's top edge. Inner: a
+     faint second line inside it. Edge: the hairline round the outside.
+     Shade: the shadow underneath. Contact: where the pane meets the
+     page. Lift: the shadow of the thickest panes, standing higher. */
+  --glass-rim: oklch(1 0 0 / 90%);
+  --glass-inner: oklch(1 0 0 / 35%);
+  --glass-edge: oklch(0.38 0.03 265 / 10%);
+  --popover-edge: oklch(0.38 0.03 265 / 22%);
+  --popover-under: oklch(0.38 0.03 265 / 16%);
+  --glass-shade: oklch(0.3 0.06 265 / 28%);
+  --glass-contact: oklch(0.25 0.03 265 / 6%);
+  --glass-lift: oklch(0.25 0.03 265 / 14%);
+
+  /* Clear glass, for small things and for the one state. */
+  --glass-control: oklch(1 0 0 / 55%);
+  --glass-control-rim: oklch(1 0 0 / 80%);
+
+  /* The one state: a small pane of smoked glass, lit along its top
+     edge, with a hairline dark enough to find on white panes. */
+  --glass-state: oklch(0.3 0.02 265 / 9%);
+  --glass-state-rim: oklch(1 0 0 / 85%);
+  --glass-state-edge: oklch(0.3 0.02 265 / 13%);
+
+  /* Under the pointer. */
+  --hover: oklch(0.3 0.02 265 / 10%);
+
+  /* The primary button is a solid pane the colour of the ink: lit
+     along its top edge, shaded along its bottom one. */
+  --primary-solid: 88%;
+  --primary-rim: oklch(1 0 0 / 30%);
+  --primary-under: oklch(0 0 0 / 45%);
+  --primary-inner: oklch(1 0 0 / 7%);
+  --primary-edge: oklch(0.2 0 0 / 30%);
+
+  /* A field is a pane of clear glass to type on. */
+  --field: oklch(1 0 0 / 60%);
+  --field-rim: oklch(1 0 0);
+  --field-edge: oklch(0.3 0.02 265 / 14%);
+  --focus-line: oklch(0.2 0 0 / 50%);
+
+  /* A groove: a track a knob runs in, shaded under its upper lip. */
+  --well-shade: oklch(0.3 0.06 265 / 14%);
+  --well-rim: oklch(1 0 0 / 85%);
+
+  --glass-blur: blur(26px) saturate(180%);
+  --glass-blur-control: blur(14px);
+
+  /* Three sources of light under the glass, kept faint enough that
+     the page still reads as one even surface. Dark has none. */
+  --light-1: oklch(0.68 0.13 165 / 7%);
+  --light-2: oklch(0.75 0.08 240 / 11%);
+  --light-3: oklch(0.68 0.13 165 / 4%);
+
+  /* Brand: the one hue the material allows itself, for the eyebrow,
+     the status line, and links in motion. */
+  --brand: oklch(0.68 0.13 165);
+  --link: oklch(0.5 0.17 255);
+
+  /* Fonts: Solid Glass is set in Geist; code and meta in Geist Mono. */
+  --font-display: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Radii: a pane is rounded by --radius-card; a control takes a step
+     down from it, so a control never becomes a pill. */
+  --radius-card: 0.875rem;
+  --radius-input: 0.7rem;
+
+  /* Layout tokens, unchanged from the previous theme. */
   --space-3xs: .25rem; --space-2xs: .5rem; --space-xs: .75rem;
   --space-sm: 1rem; --space-md: 1.5rem; --space-lg: 2rem;
   --space-xl: 3rem; --space-2xl: 4.5rem; --space-3xl: 7rem;
   --text-xs: .75rem; --text-sm: .875rem; --text-md: 1rem;
   --text-lg: 1.25rem; --text-xl: 1.625rem; --text-2xl: 2.25rem;
-  --ease-out: cubic-bezier(.16, 1, .3, 1);
-  --dur-short: 160ms; --dur-medium: 260ms;
-  --radius-input: 6px; --radius-card: 10px;
 }
 
-/* Dark theme — engineered graphite, same cobalt signal.
-   Active when the pre-paint script in base.html sets data-theme="dark". */
+/* ---- Solid Glass ----------------------------------------------------------
+
+   An even, unlit page, and the glass turns smoky. There is no ambient
+   light: on a dark page it reads as a bright patch and a vignette, and
+   uneven ground behind long text is tiring to work on. Text is close
+   to white. */
+
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --color-paper: oklch(17% 0.014 255);
-  --color-paper-2: oklch(21.5% 0.016 255);
-  --color-ink: oklch(94% 0.005 250);
-  --color-ink-2: oklch(86% 0.007 250);
-  --color-muted: oklch(68% 0.012 252);
-  --color-rule: oklch(29% 0.012 253);
-  --color-rule-2: oklch(37% 0.013 253);
-  --color-accent: oklch(70% 0.14 258);
-  --color-accent-ink: oklch(16% 0.02 258);
-  --color-focus: oklch(76% 0.13 258);
-  --color-graphite: oklch(12% 0.01 255);
-  --color-graphite-2: oklch(22% 0.012 255);
-  --color-graphite-ink: oklch(88% 0.005 250);
-  --color-success: oklch(76% 0.13 152);
-  --color-success-bg: oklch(26% 0.035 152);
-  --color-error: oklch(74% 0.13 27);
-  --color-error-bg: oklch(27% 0.045 27);
+
+  --background: oklch(0.16 0 0);
+  --foreground: oklch(0.985 0 0);
+
+  --panel: oklch(1 0 0 / 4.5%);
+  --card: oklch(0.31 0 0 / 46%);
+  --popover: oklch(0.22 0 0 / 96%);
+  --popover-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.94 0 0);
+  --primary-foreground: oklch(0.18 0 0);
+  --muted: oklch(1 0 0 / 7%);
+  --muted-foreground: oklch(0.72 0 0);
+  --border: oklch(1 0 0 / 11%);
+  --destructive: oklch(0.704 0.191 22.216);
+  --success: oklch(0.74 0.16 152);
+
+  --glass-rim: oklch(1 0 0 / 16%);
+  --glass-inner: oklch(1 0 0 / 4%);
+  --glass-edge: oklch(1 0 0 / 6%);
+  --popover-edge: var(--glass-edge);
+  --popover-under: oklch(0 0 0 / 0%);
+  --glass-shade: oklch(0 0 0 / 60%);
+  --glass-contact: oklch(0 0 0 / 10%);
+  --glass-lift: oklch(0 0 0 / 22%);
+
+  --glass-control: oklch(1 0 0 / 7%);
+  --glass-control-rim: oklch(1 0 0 / 11%);
+
+  --glass-state: var(--glass-control);
+  --glass-state-rim: var(--glass-control-rim);
+  --glass-state-edge: var(--glass-edge);
+
+  --hover: oklch(1 0 0 / 8%);
+
+  --primary-solid: 86%;
+  --primary-rim: oklch(1 0 0);
+  --primary-under: oklch(0 0 0 / 22%);
+  --primary-inner: oklch(0 0 0 / 7%);
+  --primary-edge: oklch(1 0 0 / 26%);
+
+  --field: oklch(1 0 0 / 6%);
+  --field-rim: oklch(1 0 0 / 15%);
+  --field-edge: oklch(1 0 0 / 8%);
+  --focus-line: oklch(1 0 0 / 40%);
+
+  --well-shade: oklch(0 0 0 / 38%);
+  --well-rim: oklch(1 0 0 / 9%);
+
+  /* Neutral grey, like the page: no tint of its own, and it blurs
+     what is behind it without boosting its colour. */
+  --glass-blur: blur(26px);
+
+  --light-1: transparent;
+  --light-2: transparent;
+  --light-3: transparent;
+
+  --brand: oklch(0.78 0.13 166);
+  --link: oklch(0.76 0.12 250);
+}
+
+/* Without the blur, for a reader whose system asks for less
+   transparency. The panes turn opaque and keep their rim and shadow,
+   which is most of what they were. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --panel: oklch(0.947 0.006 265);
+    --card: oklch(0.958 0.005 265);
+    --popover: oklch(0.98 0.003 265);
+  }
+  :root[data-theme="dark"] {
+    --panel: oklch(0.19 0 0);
+    --card: oklch(0.225 0 0);
+    --popover: oklch(0.22 0 0);
+  }
 }
