@@ -26,6 +26,10 @@
         History
     </a>
 
+    <a href="{{ url_for('status_report', project_id=project.id) }}">
+        Report
+    </a>
+
     <a href="{{ url_for('review_queue', project_id=project.id) }}">
         Review{% if needs_review_count %} ({{ needs_review_count }}){% endif %}
     </a>

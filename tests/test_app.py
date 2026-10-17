@@ -1156,6 +1156,61 @@ class FlaskAppTests(unittest.TestCase):
             risk = db.session.get(Risk, risk_id)
             self.assertEqual(risk.status, "open")
 
+    def test_status_report_page_and_download(self):
+        project_id = self.create_project()
+        meeting_id = self._seed_meeting(project_id, {})
+        self._seed_risk(project_id, meeting_id=meeting_id)
+
+        with self.app.app_context():
+            action = ActionItem(
+                project_id=project_id,
+                title="Chase vendor",
+                canonical_title="chase vendor",
+                details="Email support",
+                owner="Ava",
+                status="open",
+                created_in_meeting_id=meeting_id,
+                updated_in_meeting_id=meeting_id,
+            )
+            db.session.add(action)
+            db.session.commit()
+
+        page = self.client.get(f"/projects/{project_id}/report")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Status report: Phoenix", page.data)
+        self.assertIn(b"Open risks", page.data)
+        self.assertIn(b"Vendor API quota exhaustion", page.data)
+        self.assertIn(b"impact: high", page.data)
+        self.assertIn(b"Open action items", page.data)
+        self.assertIn(b"owner: Ava", page.data)
+        self.assertIn(b"Risks: 1 open, 0 resolved", page.data)
+        self.assertIn(b"Action items: 1 open, 0 completed", page.data)
+
+        download = self.client.get(f"/projects/{project_id}/report?download=1")
+
+        self.assertEqual(download.status_code, 200)
+        self.assertIn("text/markdown", download.headers["Content-Type"])
+        self.assertIn(
+            f"status-report-{project_id}.md",
+            download.headers["Content-Disposition"],
+        )
+        self.assertTrue(download.data.startswith(b"# Status report: Phoenix"))
+
+    def test_status_report_of_empty_project(self):
+        project_id = self.create_project()
+
+        page = self.client.get(f"/projects/{project_id}/report")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"No meeting analysis yet.", page.data)
+        self.assertIn(b"Risks: 0 open, 0 resolved", page.data)
+
+    def test_status_report_unknown_project_404(self):
+        response = self.client.get("/projects/99999/report")
+
+        self.assertEqual(response.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()
