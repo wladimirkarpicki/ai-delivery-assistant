@@ -1275,6 +1275,34 @@ class FlaskAppTests(unittest.TestCase):
         # not produce diff lines.
         self.assertNotIn(b"note:", page.data)
 
+    def test_dashboard_lists_projects_with_counts(self):
+        project_id = self.create_project()
+        meeting_id = self._seed_meeting(project_id, {})
+        self._seed_risk(project_id, meeting_id=meeting_id)
+
+        self.client.post("/projects", data={"name": "Orion", "description": "Empty project"})
+
+        page = self.client.get("/dashboard")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Dashboard", page.data)
+        self.assertIn(b"Phoenix", page.data)
+        self.assertIn(b"Orion", page.data)
+        # Phoenix carries one open risk from the seeded item.
+        self.assertIn(b"1 open risk\n", page.data)
+        self.assertIn(b"1 meeting\n", page.data)
+        # Orion has no meetings yet: empty counts and no analysis.
+        self.assertIn(b"0 open risk", page.data)
+        self.assertIn(b"No meeting analysis yet.", page.data)
+        # Both projects link back to their overview pages.
+        self.assertIn(f'href="/projects/{project_id}"'.encode(), page.data)
+
+    def test_dashboard_empty(self):
+        page = self.client.get("/dashboard")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"No projects yet.", page.data)
+
 
 if __name__ == "__main__":
     unittest.main()

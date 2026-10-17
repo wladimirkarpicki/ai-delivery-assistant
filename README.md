@@ -39,6 +39,7 @@ The project is designed around a practical delivery-management problem: **the sa
   - **UPDATE** вЂ” existing item with changed information
   - **CONFLICT** вЂ” new information contradicts existing memory
 - Immutable meeting records containing the original input and AI analysis
+- Cross-project dashboard: every project at a glance - delivery status, progress, open risk/blocker/action counts, meeting count, and last meeting date
 - History page with type filters (per-type counts), links from every event to its meeting, and before/after field diffs for changes
 - Immutable history events for memory changes
 - CSRF protection on all forms (Flask-WTF)
