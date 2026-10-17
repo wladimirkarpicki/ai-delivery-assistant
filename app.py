@@ -353,6 +353,23 @@ def create_app(router_instance=None, database_url=None):
 
         return render_template("report.html", project=project, report=report)
 
+    @app.get("/dashboard")
+    def dashboard():
+        rows = []
+        for project in Project.query.order_by(Project.updated_at.desc()).all():
+            state = project.state
+            rows.append({
+                "project": project,
+                "status": (state.delivery_status if state else "unknown").replace("_", " "),
+                "progress": state.progress_summary if state else "No meeting analysis yet.",
+                "open_risks": Risk.query.filter_by(project_id=project.id, status="open").count(),
+                "open_blockers": Blocker.query.filter_by(project_id=project.id, status="open").count(),
+                "open_actions": ActionItem.query.filter_by(project_id=project.id, status="open").count(),
+                "meeting_count": Meeting.query.filter_by(project_id=project.id).count(),
+                "last_meeting": db.session.query(db.func.max(Meeting.created_at)).filter_by(project_id=project.id).scalar(),
+            })
+        return render_template("dashboard.html", rows=rows)
+
     @app.template_filter("history_changes")
     def history_changes_filter(event):
         """

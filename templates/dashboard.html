@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="page-heading">
+    <div>
+        <a href="{{ url_for('projects') }}">← Projects</a>
+        <span class="eyebrow">Cross-project view</span>
+        <h1>Dashboard</h1>
+
+        <p>Every project at a glance.</p>
+    </div>
+</div>
+
+
+{% if rows %}
+
+<div class="cards" aria-label="Projects">
+
+    {% for row in rows %}
+
+        <section class="panel">
+            <h2>
+                <a href="{{ url_for('project_overview', project_id=row.project.id) }}">
+                    {{ row.project.name }}
+                </a>
+            </h2>
+
+            <p>
+                <strong>{{ row.status|title }}</strong>
+            </p>
+
+            <p>{{ row.progress }}</p>
+
+            <small>
+                {{ row.open_risks }} open risk{{ 's' if row.open_risks != 1 else '' }}
+                ·
+                {{ row.open_blockers }} open blocker{{ 's' if row.open_blockers != 1 else '' }}
+                ·
+                {{ row.open_actions }} open action{{ 's' if row.open_actions != 1 else '' }}
+                ·
+                {{ row.meeting_count }} meeting{{ 's' if row.meeting_count != 1 else '' }}
+                {% if row.last_meeting %}
+                    ·
+                    last {{ row.last_meeting.strftime('%Y-%m-%d') }}
+                {% endif %}
+            </small>
+        </section>
+
+    {% endfor %}
+
+</div>
+
+{% else %}
+
+<p>No projects yet.</p>
+
+{% endif %}
+
+{% endblock %}
