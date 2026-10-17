@@ -1211,6 +1211,70 @@ class FlaskAppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def _seed_history_event(self, project_id, meeting_id, event_type, before=None, after=None, summary="Seeded event"):
+        with self.app.app_context():
+            event = HistoryEvent(
+                project_id=project_id,
+                meeting_id=meeting_id,
+                entity_type="risk",
+                entity_id=None,
+                event_type=event_type,
+                summary=summary,
+                before_data=before,
+                after_data=after,
+            )
+            db.session.add(event)
+            db.session.commit()
+            return event.id
+
+    def test_history_filters_by_event_type(self):
+        project_id = self.create_project()
+        meeting_id = self._seed_meeting(project_id, {})
+        self._seed_history_event(project_id, meeting_id, "manual_resolve", summary="Resolved manually")
+        self._seed_history_event(project_id, meeting_id, "manual_reopen", summary="Reopened manually")
+
+        page = self.client.get(f"/projects/{project_id}/history")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Resolved manually", page.data)
+        self.assertIn(b"Reopened manually", page.data)
+        # Filter chips with per-type counts.
+        self.assertIn(b"All (2)", page.data)
+        self.assertIn(b"Manual Resolve (1)", page.data)
+        self.assertIn(b"Manual Reopen (1)", page.data)
+
+        filtered = self.client.get(f"/projects/{project_id}/history?type=manual_resolve")
+
+        self.assertEqual(filtered.status_code, 200)
+        self.assertIn(b"Resolved manually", filtered.data)
+        self.assertNotIn(b"Reopened manually", filtered.data)
+
+    def test_history_shows_meeting_links_and_diffs(self):
+        project_id = self.create_project()
+        meeting_id = self._seed_meeting(project_id, {})
+        self._seed_history_event(
+            project_id,
+            meeting_id,
+            "manual_resolve",
+            before={"status": "open"},
+            after={"status": "resolved", "note": "fixed in prod"},
+            summary="Risk closed early",
+        )
+
+        page = self.client.get(f"/projects/{project_id}/history")
+
+        self.assertEqual(page.status_code, 200)
+        # The meeting reference is now a real link to the meeting page.
+        self.assertIn(f'href="/meetings/{meeting_id}"'.encode(), page.data)
+        # Scalar field diffs render as "field: old -> new" (whitespace
+        # between the parts comes from the template layout).
+        self.assertIn(b"status:", page.data)
+        self.assertIn(b"&rarr;", page.data)
+        self.assertIn(b"resolved", page.data)
+        # Values only present in after_data (no before counterpart) do
+        # not produce diff lines.
+        self.assertNotIn(b"note:", page.data)
+
 
 if __name__ == "__main__":
     unittest.main()
