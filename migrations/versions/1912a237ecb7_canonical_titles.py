@@ -9,9 +9,8 @@ Revises: 8c211c5dcd45
 Create Date: 2026-10-16 05:04:44.841659
 
 """
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '1912a237ecb7'
@@ -53,14 +52,14 @@ def upgrade():
 
     for table in _TABLES:
         rows = bind.execute(
-            sa.text(f"SELECT id, title FROM {table}")  # noqa: S608
+            sa.text(f"SELECT id, title FROM {table}")
         ).fetchall()
 
         for row in rows:
             canonical = _normalize_title(row.title)
 
             bind.execute(
-                sa.text(  # noqa: S608
+                sa.text(
                     f"UPDATE {table} SET canonical_title = :canonical "
                     f"WHERE id = :row_id"
                 ),

@@ -16,13 +16,11 @@ database_url=None), so the test suite drives a FakeRouter against an
 in-memory database exactly as before.
 """
 
-from datetime import datetime, timezone
 import io
-import io
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -66,7 +64,6 @@ from project_memory import (
 from report import build_status_report
 from router import ModelRouter
 
-
 # ---------------------------------------------------------------------------
 # Request bodies
 
@@ -83,7 +80,7 @@ class ManualResolve(BaseModel):
 
 class ReviewResolve(BaseModel):
     action: str = ""
-    target_item_id: Optional[int] = None
+    target_item_id: int | None = None
     note: str = ""
 
 
@@ -194,7 +191,7 @@ def ensure_item_embeddings(router, memory):
             EMBEDDING_MODEL,
             [canonical for _, _, canonical in pending],
         )
-    except Exception:
+    except (ValueError, RuntimeError, ConnectionError, TimeoutError):
         # Silent degradation: lexical candidate ranking still works.
         return memory
 
@@ -236,7 +233,7 @@ def embed_finding_titles(router, analysis):
 
     try:
         vectors = router.embed_texts(DEFAULT_PROVIDER, EMBEDDING_MODEL, titles)
-    except Exception:
+    except (ValueError, RuntimeError, ConnectionError, TimeoutError):
         return {}
 
     return dict(zip(titles, vectors))
@@ -597,7 +594,7 @@ def create_app(router_instance=None, database_url=None):
         project_id: int,
         title: str = Form(""),
         meeting_notes: str = Form(""),
-        meeting_file: Optional[UploadFile] = File(None),
+        meeting_file: UploadFile | None = None,
     ):
         project = _get_project(project_id)
 
@@ -694,11 +691,11 @@ def create_app(router_instance=None, database_url=None):
                     meeting,
                     combine_plans(pre_matched["auto"], consolidation_plan),
                 )
-            except Exception as consolidation_error:
+            except (ValueError, RuntimeError, KeyError, TypeError) as consolidation_error:
                 # Fallback to traditional analysis if consolidation fails
                 warning = (
                     "Note: Consolidation encountered an issue "
-                    f"({str(consolidation_error)}), using standard analysis."
+                    f"({consolidation_error!s}), using standard analysis."
                 )
                 apply_meeting_analysis(project, meeting, analysis_json)
             else:
@@ -946,7 +943,7 @@ def create_app(router_instance=None, database_url=None):
                 }
 
             item.status = target_status
-            setattr(item, time_col, datetime.now(timezone.utc))
+            setattr(item, time_col, datetime.now(UTC))
             setattr(item, meeting_col, None)
             db.session.commit()
             db.session.add(HistoryEvent(
@@ -957,7 +954,7 @@ def create_app(router_instance=None, database_url=None):
                 event_type="manual_resolve",
                 summary=f"Manually resolved {entity_type}: {item.title}",
                 after_data={"status": target_status, "note": note},
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ))
             db.session.commit()
 
@@ -987,7 +984,7 @@ def create_app(router_instance=None, database_url=None):
                 event_type="manual_reopen",
                 summary=f"Manually reopened {entity_type}: {item.title}",
                 after_data={"status": "open", "note": note},
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ))
             db.session.commit()
 

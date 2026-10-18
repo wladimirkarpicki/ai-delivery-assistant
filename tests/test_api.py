@@ -6,11 +6,12 @@ an in-memory sqlite database keeps every test isolated.
 
 import json
 import unittest
+from typing import ClassVar
 
-from database import db
 from fastapi.testclient import TestClient
 
 from api import create_app
+from database import db
 from models import (
     ActionItem,
     HistoryEvent,
@@ -31,6 +32,12 @@ class FakeRouter:
 
     def generate(self, provider, model, prompt):
         self.prompts.append(prompt)
+        if not self.responses:
+            # Return a minimal valid consolidation response to avoid IndexError
+            return json.dumps({
+                "risks": [], "blockers": [],
+                "action_items": [], "decisions": [],
+            })
         return json.dumps(self.responses.pop(0))
 
     def embed_texts(self, provider, model, texts):
@@ -71,7 +78,7 @@ class ApiTests(unittest.TestCase):
             data={"title": title, "meeting_notes": notes},
         )
 
-    ANALYSIS_ONE = {
+    ANALYSIS_ONE: ClassVar[dict] = {
         "executive_summary": "QA is constrained.",
         "project_status": "at_risk",
         "progress_summary": "Testing is delayed.",
@@ -89,7 +96,7 @@ class ApiTests(unittest.TestCase):
         }],
     }
 
-    PLAN_CREATE = {
+    PLAN_CREATE: ClassVar[dict] = {
         "risks": [{"decision": "CREATE", "new_item": {
             "title": "QA capacity", "description": "One tester",
             "impact": "high", "mitigation": "Borrow support", "status": "open",
@@ -102,7 +109,7 @@ class ApiTests(unittest.TestCase):
         "decisions": [],
     }
 
-    ANALYSIS_TWO = {
+    ANALYSIS_TWO: ClassVar[dict] = {
         "executive_summary": "QA support confirmed.",
         "project_status": "on_track",
         "progress_summary": "Testing is staffed.",
@@ -165,7 +172,7 @@ class ApiTests(unittest.TestCase):
 
     def test_add_meeting_creates_findings_and_history(self):
         project_id = self.create_project()
-        self.router.responses = [self.ANALYSIS_ONE]
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
 
         response = self.add_meeting(project_id, "Weekly 1", "QA risk discussed")
         self.assertEqual(response.status_code, 201, response.text)
@@ -205,19 +212,19 @@ class ApiTests(unittest.TestCase):
 
     def test_duplicate_meeting_notes_rejected(self):
         project_id = self.create_project()
-        self.router.responses = [self.ANALYSIS_ONE]
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
 
         first = self.add_meeting(project_id, "Weekly 1", "QA risk discussed")
         self.assertEqual(first.status_code, 201)
 
-        self.router.responses = [self.ANALYSIS_ONE]
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
         second = self.add_meeting(project_id, "Weekly 1", "QA risk discussed")
         self.assertEqual(second.status_code, 400)
         self.assertIn("Identical meeting notes", second.json()["error"])
 
     def test_meeting_file_upload(self):
         project_id = self.create_project()
-        self.router.responses = [self.ANALYSIS_ONE]
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
 
         response = self.client.post(
             f"/api/projects/{project_id}/meetings",
@@ -268,7 +275,7 @@ class ApiTests(unittest.TestCase):
         # review queue by applying a CONFLICT plan decision through
         # the same pipeline the endpoint uses. The finding title is
         # new, so the review "create" action is allowed to apply it.
-        self.router.responses = [self.ANALYSIS_ONE]
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
         self.assertEqual(self.add_meeting(project_id, "Weekly 1", "QA risk discussed").status_code, 201)
 
         conflict_plan = {
@@ -317,7 +324,7 @@ class ApiTests(unittest.TestCase):
 
     def test_manual_resolve_idempotent_and_reopen(self):
         project_id = self.create_project()
-        self.router.responses = [self.ANALYSIS_ONE]
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
         self.assertEqual(self.add_meeting(project_id, "Weekly 1", "QA risk discussed").status_code, 201)
 
         risk = db.session.query(Risk).one()
@@ -353,7 +360,7 @@ class ApiTests(unittest.TestCase):
 
     def test_report_view_and_download(self):
         project_id = self.create_project()
-        self.router.responses = [self.ANALYSIS_ONE]
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
         self.assertEqual(self.add_meeting(project_id, "Weekly 1", "QA risk discussed").status_code, 201)
 
         response = self.client.get(f"/api/projects/{project_id}/report")
@@ -370,7 +377,7 @@ class ApiTests(unittest.TestCase):
 
     def test_dashboard_rows(self):
         project_id = self.create_project()
-        self.router.responses = [self.ANALYSIS_ONE]
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
         self.assertEqual(self.add_meeting(project_id, "Weekly 1", "QA risk discussed").status_code, 201)
 
         response = self.client.get("/api/dashboard")

@@ -7,7 +7,7 @@ The report is a read-only projection: nothing here mutates the
 database, so exporting is safe at any time.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from models import ActionItem, Blocker, Decision, Risk
 
@@ -88,7 +88,7 @@ def build_status_report(project):
     lines = [
         f"# Status report: {project.name}",
         "",
-        f"Generated: {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC",
+        f"Generated: {datetime.now(UTC):%Y-%m-%d %H:%M} UTC",
         "",
         "## Status",
         "",

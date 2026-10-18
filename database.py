@@ -182,7 +182,7 @@ class _DB:
     create_all = staticmethod(create_all)
     drop_all = staticmethod(drop_all)
 
-    class session:  # noqa: N801 - namespace held to a class on purpose
+    class session:
         """Proxy to the scoped session, mirroring Flask-SQLAlchemy."""
 
         get = staticmethod(_Session.get)
