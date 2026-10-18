@@ -17,6 +17,8 @@ in-memory database exactly as before.
 """
 
 from datetime import datetime, timezone
+import io
+import io
 from pathlib import Path
 from typing import Optional
 
@@ -386,15 +388,39 @@ class _SyncUpload:
     """
     Flask FileStorage-compatible view over a Starlette UploadFile:
     document_parser.extract_text reads .filename and calls .read()
-    synchronously.
+    synchronously, and python-docx / pypdf open the object as a
+    seekable stream (ZipFile needs seek/tell). The adapter wraps the
+    already-loaded upload bytes in a BytesIO so every protocol the
+    parser relies on is available.
     """
 
     def __init__(self, filename, content: bytes):
         self.filename = filename
-        self._content = content
+        self._buffer = io.BytesIO(content)
 
-    def read(self) -> bytes:
-        return self._content
+    def read(self, n: int = -1) -> bytes:
+        return self._buffer.read(n)
+
+    def seek(self, *args, **kwargs):
+        return self._buffer.seek(*args, **kwargs)
+
+    def seekable(self) -> bool:
+        return self._buffer.seekable()
+
+    def tell(self):
+        return self._buffer.tell()
+
+    def getvalue(self) -> bytes:
+        return self._buffer.getvalue()
+
+    def close(self):
+        return self._buffer.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
 
 # ---------------------------------------------------------------------------
