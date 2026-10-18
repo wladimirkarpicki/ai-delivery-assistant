@@ -1013,8 +1013,14 @@ def create_app(router_instance=None, database_url=None):
     def spa_fallback(full_path: str):
         candidate = (dist_dir / full_path).resolve()
 
-        if full_path and candidate.is_file() and dist_dir in candidate.parents:
-            return FileResponse(candidate)
+        if full_path:
+            try:
+                candidate.relative_to(dist_dir)
+            except ValueError:
+                pass
+            else:
+                if candidate.is_file():
+                    return FileResponse(candidate)
 
         index = dist_dir / "index.html"
 
