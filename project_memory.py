@@ -7,7 +7,6 @@ from models import (
     Blocker,
     Decision,
     HistoryEvent,
-    Meeting,
     ProjectState,
     Risk,
     utcnow,

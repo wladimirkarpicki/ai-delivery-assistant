@@ -194,7 +194,7 @@ NEW MEETING FINDINGS:
             ) from error
 
         if not isinstance(consolidation, dict):
-            raise ValueError(
+            raise TypeError(
                 "The AI memory consolidation response "
                 "must be a JSON object."
             )
@@ -215,7 +215,7 @@ NEW MEETING FINDINGS:
                 consolidation[section] = []
 
             if not isinstance(consolidation[section], list):
-                raise ValueError(
+                raise TypeError(
                     f"Invalid consolidation section: {section}"
                 )
 

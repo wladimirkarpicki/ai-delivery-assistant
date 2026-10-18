@@ -3,7 +3,6 @@ from pathlib import Path
 from docx import Document
 from pypdf import PdfReader
 
-
 SUPPORTED_EXTENSIONS = {
     ".pdf",
     ".docx",

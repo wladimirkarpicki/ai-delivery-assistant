@@ -1,4 +1,5 @@
 import unittest
+from typing import ClassVar
 
 from matching import (
     ALL_SECTIONS,
@@ -347,7 +348,7 @@ class DowngradeTests(unittest.TestCase):
 
 
 class SemanticMatchingTests(unittest.TestCase):
-    MEMORY = {
+    MEMORY: ClassVar[dict] = {
         "risks": [
             {
                 "id": 1,

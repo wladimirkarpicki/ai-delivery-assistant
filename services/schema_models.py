@@ -16,7 +16,7 @@ rejected loudly: a partially malformed response fails the whole call
 project memory.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -32,42 +32,42 @@ class _TolerantModel(BaseModel):
 # -----------------------------------------------------------
 
 class RiskFinding(_TolerantModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    impact: Optional[str] = None
-    mitigation: Optional[str] = None
-    status: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
+    impact: str | None = None
+    mitigation: str | None = None
+    status: str | None = None
 
 
 class BlockerFinding(_TolerantModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
+    status: str | None = None
 
 
 class DecisionFinding(_TolerantModel):
-    title: Optional[str] = None
-    details: Optional[str] = None
+    title: str | None = None
+    details: str | None = None
 
 
 class ActionItemFinding(_TolerantModel):
-    title: Optional[str] = None
-    details: Optional[str] = None
-    owner: Optional[str] = None
-    due_date: Optional[str] = None
-    status: Optional[str] = None
+    title: str | None = None
+    details: str | None = None
+    owner: str | None = None
+    due_date: str | None = None
+    status: str | None = None
 
 
 class Analysis(_TolerantModel):
-    executive_summary: Optional[str] = None
-    project_status: Optional[str] = None
-    progress_summary: Optional[str] = None
-    completed_items: Optional[List[Any]] = None
-    in_progress_items: Optional[List[Any]] = None
-    risks: Optional[List[RiskFinding]] = None
-    blockers: Optional[List[BlockerFinding]] = None
-    decisions: Optional[List[DecisionFinding]] = None
-    action_items: Optional[List[ActionItemFinding]] = None
+    executive_summary: str | None = None
+    project_status: str | None = None
+    progress_summary: str | None = None
+    completed_items: list[Any] | None = None
+    in_progress_items: list[Any] | None = None
+    risks: list[RiskFinding] | None = None
+    blockers: list[BlockerFinding] | None = None
+    decisions: list[DecisionFinding] | None = None
+    action_items: list[ActionItemFinding] | None = None
 
 
 # -----------------------------------------------------------
@@ -75,18 +75,18 @@ class Analysis(_TolerantModel):
 # -----------------------------------------------------------
 
 class PlanEntry(_TolerantModel):
-    decision: Optional[str] = None
-    new_item: Optional[Dict[str, Any]] = None
-    existing_item_id: Optional[Union[int, str]] = None
-    canonical_title: Optional[str] = None
-    reason: Optional[str] = None
+    decision: str | None = None
+    new_item: dict[str, Any] | None = None
+    existing_item_id: int | str | None = None
+    canonical_title: str | None = None
+    reason: str | None = None
 
 
 class ConsolidationPlan(_TolerantModel):
-    risks: List[PlanEntry] = Field(default_factory=list)
-    blockers: List[PlanEntry] = Field(default_factory=list)
-    action_items: List[PlanEntry] = Field(default_factory=list)
-    decisions: List[PlanEntry] = Field(default_factory=list)
+    risks: list[PlanEntry] = Field(default_factory=list)
+    blockers: list[PlanEntry] = Field(default_factory=list)
+    action_items: list[PlanEntry] = Field(default_factory=list)
+    decisions: list[PlanEntry] = Field(default_factory=list)
 
 
 def _describe(error: ValidationError) -> str:

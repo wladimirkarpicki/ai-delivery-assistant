@@ -82,7 +82,7 @@ def parse_analysis(result):
         raise ValueError("The AI response was not valid structured JSON.") from error
 
     if not isinstance(analysis, dict):
-        raise ValueError("The AI response must be a JSON object.")
+        raise TypeError("The AI response must be a JSON object.")
 
     # Fail loudly on a malformed contract instead of storing partial
     # garbage in project memory.
