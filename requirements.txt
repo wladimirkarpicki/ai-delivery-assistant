@@ -1,16 +1,26 @@
-Flask
-Flask-SQLAlchemy
-Flask-Migrate
-Flask-WTF
+# Backend: FastAPI stack
+fastapi
+uvicorn
+python-multipart
+
+# Database
+sqlalchemy>=2.0
 psycopg[binary]
-python-dotenv
+alembic
+
+# Analysis pipeline
 httpx
-python-docx
-pypdf
 tenacity
 pydantic
 pydantic-settings
-black
-ruff
+python-dotenv
+
+# Document parsing (meeting notes upload)
+python-docx
+pypdf
+
+# Dev tooling
 pytest
 coverage
+black
+ruff

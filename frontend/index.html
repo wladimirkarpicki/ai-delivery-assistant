@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <script>
+        // Pre-paint: apply the stored or system theme before the stylesheet
+        // renders, so dark-mode visitors never see a light flash.
+        // Ported verbatim from the Flask base.html.
+        (function () {
+            try {
+                var stored = localStorage.getItem('theme');
+                var dark = stored === 'dark' || (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+            } catch (error) {
+                // Stay on the light theme if storage is unavailable.
+            }
+        })();
+    </script>
+
+    <title>
+        AI Delivery Assistant
+    </title>
+
+    <!-- The untouched static design assets, served by FastAPI exactly
+         as Flask served them. -->
+    <link
+        rel="stylesheet"
+        href="/static/styles.css"
+    >
+</head>
+
+<body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>
