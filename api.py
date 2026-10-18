@@ -709,7 +709,7 @@ def create_app(router_instance=None, database_url=None):
             response = {"meeting_id": meeting.id}
 
             if warning:
-                response["warning"] = warning
+                response["warning"] = warning  # type: ignore[assignment]
 
             return response
         except (ValueError, RuntimeError) as exception:
@@ -739,12 +739,12 @@ def create_app(router_instance=None, database_url=None):
         project = _get_project(project_id)
         selected_type = (type or "").strip()
 
-        type_counts = dict(
-            db.session.query(HistoryEvent.event_type, db.func.count(HistoryEvent.id))
-            .filter_by(project_id=project.id)
-            .group_by(HistoryEvent.event_type)
-            .all()
-        )
+        type_counts: dict[str, int] = {}
+        results = db.session.query(
+            HistoryEvent.event_type, db.func.count(HistoryEvent.id)
+        ).filter_by(project_id=project.id).group_by(HistoryEvent.event_type).all()  # type: ignore[misc]
+        for event_type, count in results:  # type: ignore[attr-defined]
+            type_counts[str(event_type)] = int(count)  # type: ignore[attr-defined]
 
         query = HistoryEvent.query.filter_by(project_id=project.id)
 
@@ -924,7 +924,7 @@ def create_app(router_instance=None, database_url=None):
 
         item = db.session.get(model_class, item_id)
 
-        if item is None or item.project_id != project.id:
+        if item is None or item.project_id != project.id:  # type: ignore[attr-defined]
             raise HTTPException(status_code=404, detail="Item not found")
 
         latest_meeting_id = db.session.scalar(
@@ -935,14 +935,14 @@ def create_app(router_instance=None, database_url=None):
         )
 
         if action == "resolve":
-            if item.status == target_status:
+            if item.status == target_status:  # type: ignore[attr-defined]
                 return {
-                    "status": item.status,
+                    "status": item.status,  # type: ignore[attr-defined]
                     "level": "warning",
-                    "message": f"{item.title} is already {target_status}.",
+                    "message": f"{item.title} is already {target_status}.",  # type: ignore[attr-defined]
                 }
 
-            item.status = target_status
+            item.status = target_status  # type: ignore[attr-defined]
             setattr(item, time_col, datetime.now(UTC))
             setattr(item, meeting_col, None)
             db.session.commit()
@@ -950,29 +950,29 @@ def create_app(router_instance=None, database_url=None):
                 project_id=project.id,
                 meeting_id=latest_meeting_id,
                 entity_type=entity_type,
-                entity_id=item.id,
+                entity_id=item.id,  # type: ignore[attr-defined]
                 event_type="manual_resolve",
-                summary=f"Manually resolved {entity_type}: {item.title}",
+                summary=f"Manually resolved {entity_type}: {item.title}",  # type: ignore[attr-defined]
                 after_data={"status": target_status, "note": note},
                 created_at=datetime.now(UTC),
             ))
             db.session.commit()
 
             return {
-                "status": item.status,
+                "status": item.status,  # type: ignore[attr-defined]
                 "level": "success",
-                "message": f"{entity_type.title()} resolved: {item.title}",
+                "message": f"{entity_type.title()} resolved: {item.title}",  # type: ignore[attr-defined]
             }
 
         if action == "reopen":
-            if item.status == "open":
+            if item.status == "open":  # type: ignore[attr-defined]
                 return {
-                    "status": item.status,
+                    "status": item.status,  # type: ignore[attr-defined]
                     "level": "warning",
-                    "message": f"{item.title} is already open.",
+                    "message": f"{item.title} is already open.",  # type: ignore[attr-defined]
                 }
 
-            item.status = "open"
+            item.status = "open"  # type: ignore[attr-defined]
             setattr(item, time_col, None)
             setattr(item, meeting_col, None)
             db.session.commit()
@@ -980,18 +980,18 @@ def create_app(router_instance=None, database_url=None):
                 project_id=project.id,
                 meeting_id=latest_meeting_id,
                 entity_type=entity_type,
-                entity_id=item.id,
+                entity_id=item.id,  # type: ignore[attr-defined]
                 event_type="manual_reopen",
-                summary=f"Manually reopened {entity_type}: {item.title}",
+                summary=f"Manually reopened {entity_type}: {item.title}",  # type: ignore[attr-defined]
                 after_data={"status": "open", "note": note},
                 created_at=datetime.now(UTC),
             ))
             db.session.commit()
 
             return {
-                "status": item.status,
+                "status": item.status,  # type: ignore[attr-defined]
                 "level": "success",
-                "message": f"{entity_type.title()} reopened: {item.title}",
+                "message": f"{entity_type.title()} reopened: {item.title}",  # type: ignore[attr-defined]
             }
 
         return error_response("Unknown action.")

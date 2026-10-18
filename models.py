@@ -7,7 +7,7 @@ def utcnow():
     return datetime.now(UTC)
 
 
-class Project(db.Model):
+class Project(db.Model):  # type: ignore[name-defined]
     __tablename__ = "projects"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -20,7 +20,7 @@ class Project(db.Model):
     meetings = db.relationship("Meeting", back_populates="project", order_by="Meeting.created_at.desc()")
 
 
-class ProjectState(db.Model):
+class ProjectState(db.Model):  # type: ignore[name-defined]
     __tablename__ = "project_states"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -35,7 +35,7 @@ class ProjectState(db.Model):
     project = db.relationship("Project", back_populates="state")
 
 
-class Meeting(db.Model):
+class Meeting(db.Model):  # type: ignore[name-defined]
     __tablename__ = "meetings"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -52,7 +52,7 @@ class Meeting(db.Model):
     project = db.relationship("Project", back_populates="meetings")
 
 
-class Risk(db.Model):
+class Risk(db.Model):  # type: ignore[name-defined]
     __tablename__ = "risks"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -70,7 +70,7 @@ class Risk(db.Model):
     resolved_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
 
-class ActionItem(db.Model):
+class ActionItem(db.Model):  # type: ignore[name-defined]
     __tablename__ = "action_items"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -88,7 +88,7 @@ class ActionItem(db.Model):
     completed_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
 
-class Blocker(db.Model):
+class Blocker(db.Model):  # type: ignore[name-defined]
     __tablename__ = "blockers"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -104,7 +104,7 @@ class Blocker(db.Model):
     resolved_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
 
-class Decision(db.Model):
+class Decision(db.Model):  # type: ignore[name-defined]
     __tablename__ = "decisions"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -116,7 +116,7 @@ class Decision(db.Model):
     created_in_meeting_id = db.Column(db.Integer, db.ForeignKey("meetings.id"), nullable=False)
 
 
-class HistoryEvent(db.Model):
+class HistoryEvent(db.Model):  # type: ignore[name-defined]
     __tablename__ = "history_events"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -137,7 +137,7 @@ class HistoryEvent(db.Model):
     )
 
 
-class ReviewResolution(db.Model):
+class ReviewResolution(db.Model):  # type: ignore[name-defined]
     __tablename__ = "review_resolutions"
 
     id = db.Column(db.Integer, primary_key=True)
