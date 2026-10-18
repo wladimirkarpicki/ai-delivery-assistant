@@ -1,4 +1,4 @@
-﻿# AI Delivery Assistant
+# AI Delivery Assistant
 
 AI-powered meeting-notes analyzer for project and delivery management.
 
@@ -42,7 +42,7 @@ The project is designed around a practical delivery-management problem: **the sa
 - Cross-project dashboard: every project at a glance - delivery status, progress, open risk/blocker/action counts, meeting count, and last meeting date
 - History page with type filters (per-type counts), links from every event to its meeting, and before/after field diffs for changes
 - Immutable history events for memory changes
-- CSRF protection on all forms (Flask-WTF)
+- JSON API served by FastAPI behind the unchanged UI; validation failures surface as structured error notices
 - Custom 404 and 500 error pages
 - Environment-based API key configuration
 
@@ -148,7 +148,12 @@ Free-tier models are fetched live from the OpenRouter API (`router.get_models()`
 
 ```text
                          +------------------+
-                         |   Flask Web UI   |
+                         |  React SPA (Vite)|
+                          +---------+--------+
+                                    |
+                                    v
+                          +------------------+
+                          | FastAPI JSON API |
                          +---------+--------+
                                    |
                                    v
@@ -199,7 +204,8 @@ Free-tier models are fetched live from the OpenRouter API (`router.get_models()`
 ## Project structure
 
 ```text
-app.py                 Flask routes and web UI entry point
+api.py                 FastAPI application: JSON API, static assets, SPA fallback
+frontend/              React + TypeScript SPA (Vite) rendering the same UI
 analyzer.py            Meeting-note analysis prompt and orchestration
 config.py              Default provider and model configuration
 database.py            SQLAlchemy and migration configuration
@@ -212,8 +218,8 @@ config_loader.py       Centralized .env loader
 services/              AI response schemas (`schema_models.py`)
 router.py              Provider routing and model discovery
 providers/             OpenRouter client implementation
-templates/             Flask HTML templates
-static/                CSS
+static/                Untouched design assets (tokens.css, styles.css)
+
 migrations/            Alembic database migrations
 tests/                 Application tests
 ```
@@ -221,9 +227,11 @@ tests/                 Application tests
 ## Technology stack
 
 - **Python**
-- **Flask**
-- **Flask-SQLAlchemy**
-- **Flask-Migrate / Alembic**
+- **FastAPI** (JSON API, static assets, SPA fallback)
+- **SQLAlchemy** 2.x
+- **React 19 + TypeScript** (Vite build; no UI framework - pages render the original markup and classes)
+
+- **Alembic**
 - **PostgreSQL**
 - **httpx** for the OpenRouter REST API
 - **python-docx** for DOCX extraction
@@ -240,12 +248,12 @@ python -m venv venv
 venv\Scripts\Activate.ps1
 ```
 
-Install dependencies (including dev: `black`, `ruff`, `pytest`, `coverage`, `flask-wtf`):
+Install dependencies (including dev: `black`, `ruff`, `pytest`, `coverage`, ``):
 
 ```powershell
 pip install -r requirements.txt
 # Or install dev tools separately
-pip install black ruff pytest coverage flask-wtf
+pip install black ruff pytest coverage 
 ```
 
 Create `.env` file (loaded centrally via `config_loader.py`):
@@ -253,7 +261,7 @@ Create `.env` file (loaded centrally via `config_loader.py`):
 ```text
 OPENROUTER_API_KEY=your_openrouter_api_key
 DATABASE_URL=postgresql+psycopg://user:password@localhost/ai-delivery-assistant
-FLASK_SECRET_KEY=replace-this-in-production
+
 ```
 
 Do not commit `.env` or API keys.
@@ -265,21 +273,23 @@ Create the PostgreSQL database once if it does not already exist.
 Apply the version-controlled schema migrations:
 
 ```powershell
-flask --app app db upgrade
+python -m alembic -c migrations/alembic.ini upgrade head
 ```
 
 ## Run locally
 
-Start the Flask application:
+Build the frontend once (pnpm): see frontend/ (pnpm --dir frontend install, then pnpm --dir frontend build).
+
+Start the FastAPI application (it serves the JSON API, the untouched static/ design assets, and the built React bundle):
 
 ```powershell
-python app.py
+python -m uvicorn api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:5000
+http://127.0.0.1:8000
 ```
 
 Then:
@@ -307,7 +317,7 @@ The project intentionally separates three responsibilities:
 2. **AI consolidation** вЂ” determine how new findings relate to existing project memory.
 3. **Database application** вЂ” apply the selected decision safely and preserve an audit trail.
 
-This separation makes the consolidation logic testable independently from the Flask UI and database workflow, and allows the reconciliation strategy to evolve without replacing the underlying project-memory model.
+This separation makes the consolidation logic testable independently from the HTTP layer and database workflow, and allows the reconciliation strategy to evolve without replacing the underlying project-memory model.
 
 ## Roadmap
 
