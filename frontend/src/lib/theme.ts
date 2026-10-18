@@ -10,7 +10,9 @@ export function useTheme() {
   })
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark")
+    // The legacy tokens key off [data-theme] on <html>; the pre-paint
+    // script in index.html already set the initial value.
+    document.documentElement.dataset.theme = theme
     localStorage.setItem(KEY, theme)
   }, [theme])
 

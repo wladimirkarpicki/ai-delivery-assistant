@@ -4,7 +4,6 @@ import type { ReactNode } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Button } from "@/components/ui/button"
 import { getMeeting, type MeetingDetail, type HistoryEvent } from "@/lib/api"
 
 const sectionLabels: Record<string, string> = {
@@ -83,16 +82,17 @@ export function MeetingDetailPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <nav className="flex flex-wrap gap-1 mb-4">
+      <nav className="subnav mb-4">
         {Object.entries(sectionLabels).map(([k, label]) => (
-          <Button
+          <button
             key={k}
-            variant={active === k ? "default" : "ghost"}
-            size="sm"
+            type="button"
+            className="subnav-link"
+            aria-current={active === k ? "page" : undefined}
             onClick={() => setActive(k)}
           >
             {label}
-          </Button>
+          </button>
         ))}
       </nav>
 
@@ -183,9 +183,9 @@ export function MeetingDetailPage() {
       </Card>
 
       <div className="mt-4">
-        <Button asChild variant="outline" size="sm">
-          <Link to="../">Back</Link>
-        </Button>
+        <Link to="../" className="button button-quiet">
+          Back
+        </Link>
       </div>
     </div>
   )

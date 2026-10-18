@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { getReport, reportDownloadUrl, type ProjectSummary } from "@/lib/api"
 
 export function ReportPage() {
@@ -34,14 +33,12 @@ export function ReportPage() {
           <p className="text-sm text-muted-foreground">Generated from current project memory</p>
         </div>
         <div className="flex gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/projects/${projectId}/overview`}>Overview</Link>
-          </Button>
-          <Button asChild size="sm">
-            <a href={reportDownloadUrl(projectId)} download>
-              Download .md
-            </a>
-          </Button>
+          <Link to={`/projects/${projectId}/overview`} className="button button-quiet">
+            Overview
+          </Link>
+          <a href={reportDownloadUrl(projectId)} download className="button">
+            Download .md
+          </a>
         </div>
       </header>
 

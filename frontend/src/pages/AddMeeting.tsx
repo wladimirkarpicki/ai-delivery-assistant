@@ -48,9 +48,9 @@ export function AddMeetingPage() {
     <div className="p-6 max-w-3xl mx-auto">
       <header className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Add meeting</h1>
-        <Button asChild variant="outline" size="sm">
-          <Link to={`/projects/${projectId}/meetings`}>Back to meetings</Link>
-        </Button>
+        <Link to={`/projects/${projectId}/meetings`} className="button button-quiet">
+          Back to meetings
+        </Link>
       </header>
 
       {health && !health.analysis_ready && (

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { getMeetings, type MeetingSummary, type ProjectSummary } from "@/lib/api"
 
@@ -36,12 +35,12 @@ export function MeetingsPage() {
           <p className="text-sm text-muted-foreground">{meetings.length} meeting(s) analyzed</p>
         </div>
         <div className="flex gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/projects/${projectId}/overview`}>Overview</Link>
-          </Button>
-          <Button asChild size="sm">
-            <Link to={`/projects/${projectId}/meetings/add`}>Add meeting</Link>
-          </Button>
+          <Link to={`/projects/${projectId}/overview`} className="button button-quiet">
+            Overview
+          </Link>
+          <Link to={`/projects/${projectId}/meetings/add`} className="button">
+            Add meeting
+          </Link>
         </div>
       </header>
 

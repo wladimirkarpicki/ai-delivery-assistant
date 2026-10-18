@@ -1,0 +1,136 @@
+/*
+ * Bridge between the legacy Solid Glass tokens (data-theme based,
+ * hand-ported for the Flask app) and the Tailwind 4 / shadcn utilities
+ * used by the React frontend.
+ *
+ * - @theme inline maps the legacy CSS variables onto the Tailwind
+ *   color/radius/font scales, so bg-card, text-muted-foreground,
+ *   rounded-lg and friends resolve to the legacy values.
+ * - The missing shadcn variables are derived from the legacy set.
+ * - Dark follows [data-theme="dark"] on <html>, as in the Flask app.
+ * - .pane-popover carries the thickest-pane recipe for dialogs and
+ *   the command palette.
+ * - .button-quiet is the small clear-glass control for secondary
+ *   actions; .subnav-link is the one-state tab; .topnav styles the
+ *   header navigation links.
+ *
+ * Import order: tokens.css -> this file -> styles.css (via index.css).
+ */
+
+@custom-variant dark (&:is([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--hover);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-brand: var(--brand);
+  --color-border: var(--border);
+  --color-input: var(--field-edge);
+  --color-ring: var(--focus-line);
+
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius-card) * 0.6);
+  --radius-md: calc(var(--radius-card) * 0.8);
+  --radius-lg: var(--radius-card);
+  --radius-xl: calc(var(--radius-card) * 1.4);
+}
+
+/* Variables the shadcn base layer expects that the legacy tokens do
+   not define; derived one-to-one from the legacy material. */
+:root,
+:root[data-theme="dark"] {
+  --card-foreground: var(--foreground);
+  --secondary: var(--muted);
+  --secondary-foreground: var(--foreground);
+  --accent: var(--hover);
+  --accent-foreground: var(--foreground);
+  --input: var(--field-edge);
+  --ring: var(--focus-line);
+  --radius: var(--radius-card);
+}
+
+/* Thickest pane: dialogs and the command palette. */
+.pane-popover {
+  background-color: var(--popover);
+  color: var(--popover-foreground);
+  border-width: 0;
+  border-radius: var(--radius-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    inset 0 -1px 0 var(--popover-under),
+    0 0 0 1px var(--popover-edge),
+    0 24px 60px -18px var(--glass-shade),
+    0 6px 16px -6px var(--glass-lift);
+}
+
+/* Secondary actions: small things made of clear glass, not ink.
+   Unlayered, so it beats both the element-level button recipe from
+   styles.css and the layered Tailwind utilities. */
+.button-quiet,
+button.button-quiet,
+a.button-quiet {
+  background-color: var(--glass-control);
+  color: var(--foreground);
+  border-width: 0;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-rim),
+    0 0 0 1px var(--glass-edge),
+    0 1px 2px var(--glass-contact);
+}
+.button-quiet:hover, button.button-quiet:hover, a.button-quiet:hover {
+  background-color: var(--hover);
+}
+.button-quiet:active {
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-rim),
+    0 0 0 1px var(--glass-edge);
+}
+
+/* The one state, for header navigation and filter chips. */
+.topnav a, .subnav-link {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-input);
+  color: var(--muted-foreground);
+  text-decoration: none;
+  font: 500 var(--text-sm)/1 var(--font-mono);
+  background: none;
+  border-width: 0;
+  box-shadow: none;
+  min-height: 0;
+  cursor: pointer;
+}
+.topnav a:hover, .subnav-link:hover {
+  color: var(--foreground);
+  background-color: var(--hover);
+}
+.topnav a[aria-current="page"], .subnav-link[aria-current="page"] {
+  color: var(--foreground);
+  background-color: var(--glass-state);
+  box-shadow:
+    inset 0 1px 0 var(--glass-state-rim),
+    0 0 0 1px var(--glass-state-edge);
+}
+
+/* Links inside panes read as text, not as bare anchors. */
+.pane-card a:not(.button):not(.button-quiet),
+.status-card a:not(.button):not(.button-quiet) {
+  color: var(--foreground);
+}

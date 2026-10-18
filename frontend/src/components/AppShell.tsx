@@ -1,28 +1,25 @@
 import { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
-import { BarChart3, Folder, History as HistoryIcon, Moon, Search, Sun } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { BarChart3, Folder } from "lucide-react"
 import { useTheme } from "@/lib/theme"
-import { Button } from "@/components/ui/button"
 import {
-  Command,
   CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
   CommandList,
+  Command,
 } from "@/components/ui/command"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
-  { href: "/projects", label: "Projects", icon: Folder },
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/projects", label: "Projects" },
 ]
 
 const paletteItems = [
   { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
   { href: "/projects", label: "Projects", icon: Folder },
-  { href: "/projects", label: "Project history", icon: HistoryIcon },
 ]
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -31,7 +28,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const { theme, toggle } = useTheme()
 
-  // Ctrl+K / Cmd+K opens the command palette.
+  // Ctrl+K / Cmd+K toggles the command palette.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -49,55 +46,58 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex flex-col h-screen w-full">
-      <header className="flex items-center justify-between h-14 border-b bg-background px-4">
-        <div className="flex items-center gap-2">
-          <Link to="/" className="flex items-center gap-2">
-            <Folder className="h-5 w-5 text-primary" />
-            <span className="font-bold">AI Delivery Assistant</span>
+    <div className="flex min-h-screen flex-col">
+      <header className="app-header">
+        <div className="app-header__inner">
+          <Link to="/" className="brand">
+            AI Delivery Assistant
           </Link>
-        </div>
 
-        <nav className="flex items-center gap-1">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              to={item.href}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
-                location.pathname.startsWith(item.href) && "bg-accent text-accent-foreground",
-              )}
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+          <nav className="topnav flex items-center gap-1">
+            {navItems.map((item) => (
+              <Link
+                key={item.href}
+                to={item.href}
+                aria-current={
+                  location.pathname.startsWith(item.href) ? "page" : undefined
+                }
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2 text-muted-foreground"
+          <button
+            type="button"
+            className="command-trigger flex items-center gap-2"
             onClick={() => setPaletteOpen(true)}
           >
-            <Search className="h-4 w-4" />
-            <span className="hidden sm:inline">Search…</span>
-            <kbd className="pointer-events-none hidden sm:inline rounded border bg-muted px-1.5 font-mono text-[10px]">
-              Ctrl K
-            </kbd>
-          </Button>
-          <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
+            Search…
+            <kbd>Ctrl K</kbd>
+          </button>
+
+          <button
+            type="button"
+            className="icon-button"
+            onClick={toggle}
+            aria-label="Toggle theme"
+            title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+          >
+            {theme === "dark" ? "☾" : "☀"}
+          </button>
         </div>
       </header>
 
-      <main className="flex-1 overflow-auto">{children}</main>
+      <main className="flex-1">{children}</main>
+
+      <footer className="app-footer">
+        <span>AI Delivery Assistant</span>
+        <span>FastAPI + React</span>
+      </footer>
 
       {/* Command palette (Ctrl+K) */}
       <Dialog open={paletteOpen} onOpenChange={setPaletteOpen}>
-        <DialogContent className="p-0 max-w-md">
+        <DialogContent className="pane-popover p-0 max-w-md">
           <Command>
             <CommandInput placeholder="Go to…" />
             <CommandList>

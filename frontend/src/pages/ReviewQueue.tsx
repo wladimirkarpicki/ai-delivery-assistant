@@ -134,9 +134,9 @@ export function ReviewQueuePage() {
           <h1 className="text-2xl font-bold">{project?.name}: review queue</h1>
           <p className="text-sm text-muted-foreground">{queue.length} item(s) need review</p>
         </div>
-        <Button asChild variant="outline" size="sm">
-          <Link to={`/projects/${projectId}/overview`}>Overview</Link>
-        </Button>
+        <Link to={`/projects/${projectId}/overview`} className="button button-quiet">
+          Overview
+        </Link>
       </header>
 
       {queue.length === 0 ? (

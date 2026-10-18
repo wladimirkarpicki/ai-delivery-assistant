@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { getHistory, type HistoryEvent, type ProjectSummary } from "@/lib/api"
 
@@ -40,28 +39,30 @@ export function HistoryPage() {
           <h1 className="text-2xl font-bold">{project?.name}: history</h1>
           <p className="text-sm text-muted-foreground">{events.length} event(s)</p>
         </div>
-        <Button asChild variant="outline" size="sm">
-          <Link to={`/projects/${projectId}/overview`}>Overview</Link>
-        </Button>
+        <Link to={`/projects/${projectId}/overview`} className="button button-quiet">
+          Overview
+        </Link>
       </header>
 
       <div className="flex flex-wrap gap-2 mb-4">
-        <Button
-          variant={selectedType === "" ? "default" : "outline"}
-          size="sm"
+        <button
+          type="button"
+          className="subnav-link"
+          aria-current={selectedType === "" ? "page" : undefined}
           onClick={() => setSearchParams({})}
         >
           All
-        </Button>
+        </button>
         {Object.entries(typeCounts).map(([type, count]) => (
-          <Button
+          <button
             key={type}
-            variant={selectedType === type ? "default" : "outline"}
-            size="sm"
+            type="button"
+            className="subnav-link"
+            aria-current={selectedType === type ? "page" : undefined}
             onClick={() => setSearchParams({ type })}
           >
             {type.replace("_", " ")} ({count})
-          </Button>
+          </button>
         ))}
       </div>
 

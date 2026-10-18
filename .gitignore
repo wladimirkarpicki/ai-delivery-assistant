@@ -14,3 +14,7 @@ frontend/.vite/
 # OS
 Thumbs.db
 .DS_Store
+
+# Tooling artifacts
+.archify/
+.hallmark/

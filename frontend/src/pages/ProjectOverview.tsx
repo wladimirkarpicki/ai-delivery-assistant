@@ -128,20 +128,21 @@ export function ProjectOverviewPage() {
           )}
         </div>
         <nav className="flex gap-2 flex-wrap">
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/projects/${projectId}/meetings`}>Meetings ({data.meeting_count})</Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/projects/${projectId}/history`}>History</Link>
-          </Button>
-          <Button asChild variant={data.needs_review_count > 0 ? "default" : "outline"} size="sm">
-            <Link to={`/projects/${projectId}/review`}>
-              Review{data.needs_review_count > 0 ? ` (${data.needs_review_count})` : ""}
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/projects/${projectId}/report`}>Report</Link>
-          </Button>
+          <Link to={`/projects/${projectId}/meetings`} className="button button-quiet">
+            Meetings ({data.meeting_count})
+          </Link>
+          <Link to={`/projects/${projectId}/history`} className="button button-quiet">
+            History
+          </Link>
+          <Link
+            to={`/projects/${projectId}/review`}
+            className={data.needs_review_count > 0 ? "button" : "button button-quiet"}
+          >
+            Review{data.needs_review_count > 0 ? ` (${data.needs_review_count})` : ""}
+          </Link>
+          <Link to={`/projects/${projectId}/report`} className="button button-quiet">
+            Report
+          </Link>
         </nav>
       </header>
 

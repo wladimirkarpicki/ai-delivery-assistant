@@ -1,6 +1,7 @@
 import { Routes, Route } from "react-router-dom"
 import { AppShell } from "@/components/AppShell"
 import { ProjectsPage } from "@/pages/Projects"
+import { CreateProjectPage } from "@/pages/CreateProject"
 import { ProjectOverviewPage } from "@/pages/ProjectOverview"
 import { MeetingsPage } from "@/pages/Meetings"
 import { AddMeetingPage } from "@/pages/AddMeeting"
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/" element={<ProjectsPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/projects/new" element={<CreateProjectPage />} />
         <Route path="/projects/:id/overview" element={<ProjectOverviewPage />} />
         <Route path="/projects/:id/meetings" element={<MeetingsPage />} />
         <Route path="/projects/:id/meetings/add" element={<AddMeetingPage />} />

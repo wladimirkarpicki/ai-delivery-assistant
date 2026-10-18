@@ -1,10 +1,15 @@
 /*
- * Global stylesheet, per the Solid Glass installation instructions:
- * Tailwind, the animation library, shadcn's own base layer, and then
- * the Solid Glass material in place of the colour variables that
- * `shadcn init` would write (none are defined here on purpose).
+ * Global stylesheet. The design is the approved Solid Glass reskin
+ * from the Flask app, restored on the React stack:
+ *   1. Tailwind + animation library + shadcn base layer
+ *   2. legacy/tokens.css  - the hand-ported Solid Glass tokens
+ *   3. legacy/shim.css    - maps those tokens onto Tailwind/shadcn
+ *   4. legacy/styles.css  - the legacy component classes (it imports
+ *      tokens.css itself and loads the Geist fonts)
  */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "./solid-glass.css";
+@import "./legacy/tokens.css";
+@import "./legacy/shim.css";
+@import "./legacy/styles.css";

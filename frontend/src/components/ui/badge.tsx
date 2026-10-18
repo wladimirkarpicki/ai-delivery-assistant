@@ -4,17 +4,20 @@ import { cn } from "cn"
 import { Slot } from "radix-ui"
 
 const badgeVariants = cva(
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3",
+  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
+        // Tags in the legacy material: a small clear pane of glass
+        // with a hairline; solid ink only for the loudest states.
+        default:
+          "rounded-[var(--radius-input)] bg-[color-mix(in_oklch,var(--primary)_86%,transparent)] text-[var(--primary-foreground)] [a&]:hover:bg-primary/90",
         secondary:
-          "bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
+          "rounded-[var(--radius-input)] bg-[var(--glass-control)] text-[var(--foreground)] [box-shadow:inset_0_1px_0_var(--glass-control-rim),0_0_0_1px_var(--glass-edge)]",
         destructive:
-          "bg-destructive text-white focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90",
+          "rounded-[var(--radius-input)] bg-[var(--destructive)] text-white [a&]:hover:bg-destructive/90",
         outline:
-          "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
+          "rounded-[var(--radius-input)] text-[var(--muted-foreground)] [box-shadow:0_0_0_1px_var(--glass-edge)] [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         link: "text-primary underline-offset-4 [a&]:hover:underline",
       },
