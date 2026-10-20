@@ -1,0 +1,17 @@
+# Build context: keep only what the image needs.
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.mypy_cache
+.ruff_cache
+.git
+.github
+.env
+tests
+tsc-check.sh
+frontend/node_modules
+frontend/dist
+monitoring
+*.md
+migrations
