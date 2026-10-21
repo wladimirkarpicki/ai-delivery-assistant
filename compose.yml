@@ -18,7 +18,11 @@ services:
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres}
       POSTGRES_DB: ${DATABASE_NAME:-ai-delivery-assistant}
     volumes:
-      - pgdata_ai:/var/lib/postgresql/data
+      # pgdata_ai2: fresh volume; the old pgdata_ai got filesystem corruption
+      # (EBADMSG on base/16384/24680-24681) after unclean Docker Desktop
+      # shutdowns on the external D: drive. Old volume left orphaned for
+      # safe cleanup later — do not rename back.
+      - pgdata_ai2:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres} -d ${DATABASE_NAME:-ai-delivery-assistant}"]
@@ -117,6 +121,6 @@ networks:
     driver: bridge
 
 volumes:
-  pgdata_ai:
+  pgdata_ai2:
   promdata_ai:
   grafdata_ai:
