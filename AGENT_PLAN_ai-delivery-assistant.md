@@ -15,6 +15,7 @@ Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-1
 | 002 | Cleanup stale feature branches (19 слияных) | completed | main | `git branch -l` → только main + feature/001-docker-fullstack | Чекап 2026-10-21: локально только main и feature/001; на origin осталось ~15 устаревших веток |
 | 003 | Инцидент-ревери: восстановление стека после fs-повреждения тома pgdata_ai + повторная миграция данных + скриншоты 8 страниц | completed | feature/001-docker-fullstack | `docker compose ps → 2 healthy; /api/health → 200; DB counts 7/16/59/9/9/6; 8 валидных PNG 1440x900` | compose down/up на новом томе pgdata_ai2 exit 0; pg_dump 111747 Б → psql restore exit 0; counts exact match; /api/health 200; screenshots 01-08 (169-240 КБ, Pillow-валидны) |
 | 004 | Кросс-проектный метрики-дашборд: /api/metrics + recharts (KPI, пай статусов/импактов, donut open items, бары по проектам и владельцам, area-таймлайн) + README-апдейт (Docker, pytest, mojibake) | in_progress | feature/004-metrics-dashboard | `pnpm --dir frontend build → exit 0; tsc → 0 errors; pytest tests/test_api.py → все зелёные; curl /api/metrics → 200` | — |
+| 005 | Аутентификация с ролями admin/user по образцу inventory-management-system: users-таблица, JWT HS256, lockout 5 неудач/15 мин, bootstrap-админ, admin-CRUD пользователей, last-admin защита, SPA login/setup/users | pending | feature/005-auth-roles | `без токена /api/projects → 401; user → 403 на /api/users; login lockout → 429; last-admin demote/delete → 400; build+tsc+pytest зелёные` | — |
 
 ## Task details
 ### 001 — Docker full-stack build + data migration
@@ -46,6 +47,13 @@ AC: /api/metrics → 200 со всеми агрегатами; дашборд р
 Verification: pnpm --dir frontend build; pnpm --dir frontend typecheck; python -m pytest tests/test_api.py; docker compose up -d --build; curl http://127.0.0.1:8001/api/metrics.
 Constraints: recharts — единственная новая зависимость; не трогать models.py/схему БД и /api/dashboard; коммиты только на feature-ветке, git add по конкретным файлам (screenshots/ и AGENT_PLAN не коммитить — план ведёт Lead).
 
+### 005 — Аутентификация с ролями admin/user
+Goal: Доступ к приложению только после логина; роли admin (управление пользователями) и user; паттерн 1:1 с inventory-management-system.
+Scope: models.py — User(id, username unique, password_hash, role user|admin) + Alembic-миграция users; api.py — auth-блок: POST /api/auth/setup (bootstrap первого admin, только при пустой users), POST /api/auth/login (JWT HS256 access_token + lockout: 5 неудач → 429 на 15 мин, in-memory), GET /api/auth/me, POST /api/auth/password (self, с current_password); admin-CRUD: GET/POST /api/users, PATCH/DELETE /api/users/{id} (no self-delete, last-admin защита), POST /api/users/{id}/password; зависимости get_current_user/require_admin на всех бизнес-роутах (кроме /api/health — docker healthcheck); PyJWT + werkzeug.security (requirements.txt); SECRET_KEY через config_loader/.env; frontend: auth-слой (AuthProvider/useAuth), Bearer-токен из localStorage, RequireAuth + redirect /login, страницы Login/Setup/Password/Users (admin), AppShell — текущий юзер + logout; тесты: 401/403/429/last-admin/user-CRUD + bearer-фикстуры для существующих тестов.
+AC: без токена все бизнес-API → 401 (кроме /api/health и auth); user → 403 на /api/users; admin управляет пользователями; lockout и last-admin срабатывают; SPA редиректит на /login, setup при пустой users; 12 старых + новые тесты зелёные; build + tsc → 0.
+Verification: python -m pytest tests/test_api.py; pnpm --dir frontend build; docker compose up -d --build; curl: /api/health → 200 без токена; /api/projects без токена → 401; login → 200 токен; user-токен → 403 на /api/users.
+Constraints: паттерн и UX — как inventory-management-system (JWT bearer, in-memory lockout, localStorage-токен); /api/health остаётся публичным (docker healthcheck); не ломать 004-метрики; пароли только werkzeug-хэш; SECRET_KEY не коммитить (.env.example — заглушка). Начало 005 — после merge 004.
+
 ## Decisions
 - 2026-10-18 — план создан (миграция на глобальный шаблон v2); процесс живёт в `.dsh/AGENTS.md`, здесь — только состояние.
 - 2026-10-20 — Docker Desktop на D:\Docker\wsl через NTFS-junction (Infra / Machine in ENVIRONMENT.md).
@@ -58,6 +66,7 @@ Constraints: recharts — единственная новая зависимос
 - 2026-10-21 — Инцидент pgdata_ai: fs-повреждение (EBADMSG) после нештатного останова Docker Desktop; точечное лечение (rm файлов, docker volume rm) невозможно — переименовали том в compose.yml на pgdata_ai2, старый оставлен orphaned для безопасной чистки позже; данные восстановлены повторным pg_dump из локального PG 18.4 (источник истины жив, localhost:5432).
 - 2026-10-22 — Merge ветки 001 в main (merge --no-ff) выполнен после зелёных тестов (12 passed) — блокер multipart исчез сам: пакет python-multipart корректно встал в системный Python, код проекта не менялся; ветка удалена локально и на origin; проект переведён на паузу (по прямому запросу пользователя).
 - 2026-10-24 — Пауза снята прямым запросом пользователя: заказан метрики-дашборд (004). Выбран recharts@3 (React 19, SVG-чарты, темизация через useTheme-хук на data-theme); README-апдейт влит в 004 — README от 18.10 не отражал Docker-стек и pytest-команду, содержал mojibake «вЂ”».
+- 2026-10-24 — Задача 005 (auth с ролями admin/user) заказана пользователем «как в inventory-management-system»: паттерн копируется с того проекта (JWT HS256 + PyJWT, werkzeug-хэши, in-memory lockout 5/15 мин, bootstrap-setup, admin-CRUD, last-admin защита, SPA AuthProvider/RequireAuth/localStorage) с адаптацией к SQLAlchemy + Alembic вместо raw psycopg; /api/health остаётся без auth ради docker healthcheck; старт 005 — после merge 004.
 
 ## Learnings
 - 2026-10-20 — Инфраструктура: Docker Desktop (WSL2) на внешнем накопителе D: (junction) — см. `ENVIRONMENT.md` (Infra / Machine).
