@@ -6,6 +6,7 @@ an in-memory sqlite database keeps every test isolated.
 
 import json
 import unittest
+from datetime import UTC, datetime
 from typing import ClassVar
 
 from fastapi.testclient import TestClient
@@ -14,6 +15,7 @@ from api import create_app
 from database import db
 from models import (
     ActionItem,
+    Blocker,
     HistoryEvent,
     Meeting,
     Project,
@@ -389,6 +391,199 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(row["open_risks"], 1)
         self.assertEqual(row["open_actions"], 1)
         self.assertEqual(row["meeting_count"], 1)
+
+    # ------------------------------------------------------------------
+    # Metrics
+
+    def test_metrics_totals_mix_status_and_per_project(self):
+        project_id = self.create_project()
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
+        self.assertEqual(self.add_meeting(project_id, "Weekly 1", "QA risk discussed").status_code, 201)
+
+        response = self.client.get("/api/metrics")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+
+        self.assertEqual(body["totals"]["projects"], 1)
+        self.assertEqual(body["totals"]["meetings"], 1)
+        self.assertEqual(body["totals"]["decisions"], 0)
+        self.assertEqual(body["totals"]["open_risks"], 1)
+        self.assertEqual(body["totals"]["open_blockers"], 0)
+        self.assertEqual(body["totals"]["open_actions"], 1)
+        self.assertGreaterEqual(body["totals"]["history_events"], 3)
+
+        # The mix mirrors the open totals, one entry per kind.
+        self.assertEqual(
+            {entry["kind"]: entry["count"] for entry in body["open_items_mix"]},
+            {"risks": 1, "blockers": 0, "actions": 1},
+        )
+
+        # The only project has an analyzed state: "at_risk" -> "at risk".
+        self.assertEqual(body["status_distribution"], [{"status": "at risk", "count": 1}])
+
+        per_project = next(p for p in body["per_project"] if p["project_id"] == project_id)
+        self.assertEqual(
+            per_project,
+            {
+                "project_id": project_id,
+                "name": "Phoenix",
+                "meetings": 1,
+                "open_risks": 1,
+                "open_blockers": 0,
+                "open_actions": 1,
+            },
+        )
+
+    def test_metrics_counts_projects_without_state_as_unknown(self):
+        project_id = self.create_project()
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
+        self.assertEqual(self.add_meeting(project_id, "Weekly 1", "QA risk discussed").status_code, 201)
+        self.create_project("Ghost", "Never had a meeting")
+
+        body = self.client.get("/api/metrics").json()
+
+        distribution = {entry["status"]: entry["count"] for entry in body["status_distribution"]}
+        self.assertEqual(distribution.get("at risk"), 1)
+        self.assertEqual(distribution.get("unknown"), 1)
+
+        # Every project appears in per_project, analyzed or not.
+        self.assertEqual(len(body["per_project"]), 2)
+        ghost = next(p for p in body["per_project"] if p["name"] == "Ghost")
+        self.assertEqual(
+            ghost,
+            {
+                "project_id": ghost["project_id"],
+                "name": "Ghost",
+                "meetings": 0,
+                "open_risks": 0,
+                "open_blockers": 0,
+                "open_actions": 0,
+            },
+        )
+
+    def test_metrics_risk_impacts_owners_and_timeline(self):
+        # Direct fixtures (not the AI pipeline): precise impacts,
+        # owners, statuses, and created_at months to aggregate against.
+        project_id = self.create_project("Atlas")
+
+        august = Meeting(
+            project_id=project_id,
+            title="Weekly 1",
+            original_text="text",
+            analysis_text="analysis",
+            analysis_json={},
+            provider="openrouter",
+            model="openrouter/free",
+            created_at=datetime(2026, 8, 15, tzinfo=UTC),
+        )
+        db.session.add(august)
+        db.session.flush()
+
+        september = Meeting(
+            project_id=project_id,
+            title="Weekly 2",
+            original_text="text two",
+            analysis_text="analysis",
+            analysis_json={},
+            provider="openrouter",
+            model="openrouter/free",
+            created_at=datetime(2026, 9, 20, tzinfo=UTC),
+        )
+        db.session.add(september)
+        db.session.flush()
+
+        db.session.add_all([
+            Risk(project_id=project_id, title="R1", impact="high", status="open",
+                 created_in_meeting_id=august.id, updated_in_meeting_id=august.id),
+            Risk(project_id=project_id, title="R2", impact="high", status="resolved",
+                 created_in_meeting_id=august.id, updated_in_meeting_id=august.id),
+            Risk(project_id=project_id, title="R3", impact="unknown", status="open",
+                 created_in_meeting_id=august.id, updated_in_meeting_id=august.id),
+            Blocker(project_id=project_id, title="B1", status="open",
+                    created_in_meeting_id=august.id, updated_in_meeting_id=august.id),
+            ActionItem(project_id=project_id, title="A1", owner="Ava", status="open",
+                       created_in_meeting_id=august.id, updated_in_meeting_id=august.id),
+            ActionItem(project_id=project_id, title="A2", owner="Ava", status="completed",
+                       created_in_meeting_id=august.id, updated_in_meeting_id=august.id),
+            ActionItem(project_id=project_id, title="A3", owner=None, status="open",
+                       created_in_meeting_id=september.id, updated_in_meeting_id=september.id),
+            HistoryEvent(project_id=project_id, meeting_id=august.id,
+                         entity_type="risk", event_type="created",
+                         summary="R1 created",
+                         created_at=datetime(2026, 8, 20, tzinfo=UTC)),
+            HistoryEvent(project_id=project_id, meeting_id=september.id,
+                         entity_type="action_item", event_type="created",
+                         summary="A3 created",
+                         created_at=datetime(2026, 9, 22, tzinfo=UTC)),
+            HistoryEvent(project_id=project_id, meeting_id=september.id,
+                         entity_type="blocker", event_type="created",
+                         summary="B1 created",
+                         created_at=datetime(2026, 9, 25, tzinfo=UTC)),
+        ])
+        db.session.commit()
+
+        body = self.client.get("/api/metrics").json()
+
+        self.assertEqual(
+            {entry["kind"]: entry["count"] for entry in body["open_items_mix"]},
+            {"risks": 2, "blockers": 1, "actions": 2},
+        )
+
+        impacts = {entry["impact"]: entry for entry in body["risk_impacts"]}
+        self.assertEqual(
+            impacts["high"], {"impact": "high", "open": 1, "resolved": 1}
+        )
+        self.assertEqual(
+            impacts["unknown"], {"impact": "unknown", "open": 1, "resolved": 0}
+        )
+        # High-severity impacts lead the breakdown.
+        self.assertEqual(body["risk_impacts"][0]["impact"], "high")
+
+        owners = body["action_owners"]
+        self.assertEqual(
+            owners[0], {"owner": "Ava", "open": 1, "completed": 1}
+        )
+        self.assertEqual(
+            owners[1], {"owner": "unassigned", "open": 1, "completed": 0}
+        )
+
+        # Every month with data, ascending, with both series merged.
+        self.assertEqual(
+            body["activity_timeline"],
+            [
+                {"month": "2026-08", "meetings": 1, "events": 1},
+                {"month": "2026-09", "meetings": 1, "events": 2},
+            ],
+        )
+
+    def test_metrics_on_empty_database(self):
+        body = self.client.get("/api/metrics").json()
+
+        self.assertEqual(
+            body["totals"],
+            {
+                "projects": 0,
+                "meetings": 0,
+                "decisions": 0,
+                "history_events": 0,
+                "open_risks": 0,
+                "open_blockers": 0,
+                "open_actions": 0,
+            },
+        )
+        self.assertEqual(
+            body["open_items_mix"],
+            [
+                {"kind": "risks", "count": 0},
+                {"kind": "blockers", "count": 0},
+                {"kind": "actions", "count": 0},
+            ],
+        )
+        self.assertEqual(body["status_distribution"], [])
+        self.assertEqual(body["per_project"], [])
+        self.assertEqual(body["risk_impacts"], [])
+        self.assertEqual(body["activity_timeline"], [])
+        self.assertEqual(body["action_owners"], [])
 
 
 if __name__ == "__main__":
