@@ -2,15 +2,15 @@
 
 AI-powered meeting-notes analyzer for project and delivery management.
 
-The application turns meeting notes into structured project intelligence вЂ” including delivery status, risks, blockers, decisions, and action items вЂ” and maintains a persistent project memory across meetings.
+The application turns meeting notes into structured project intelligence — including delivery status, risks, blockers, decisions, and action items — and maintains a persistent project memory across meetings.
 
 The project is designed around a practical delivery-management problem: **the same project information can be described differently by different AI runs or models, so extracted information needs to be reconciled before it becomes current project state.**
 
 ## Features
 
 - AI analysis of project meeting notes
-- Light and dark themes вЂ” system-aware by default, with a manual toggle
-- OpenRouter provider вЂ” all analysis runs through the Free Models Router, no model selection
+- Light and dark themes — system-aware by default, with a manual toggle
+- OpenRouter provider — all analysis runs through the Free Models Router, no model selection
 - AI provider retry (3 attempts with exponential backoff) via `tenacity`
 - Dynamic model discovery from live provider APIs (no hardcoded model list)
 - Environment-based API key configuration (centralized loader)
@@ -29,17 +29,18 @@ The project is designed around a practical delivery-management problem: **the sa
 - Semantic candidate matching: item and finding title embeddings (bge-m3 via OpenRouter) rank candidates by cosine similarity, so paraphrases with no shared words still reach the LLM as candidates; falls back to lexical similarity if embeddings are unavailable
 - Canonical titles as item identity: one row per title per project (enforced by unique indexes); resolved items reopen instead of duplicating
 - Idempotent uploads: submitting identical meeting notes is a no-op with an explicit warning
-- Review queue: findings the consolidation guardrails reject are surfaced for explicit resolution (create, link to existing, or dismiss) вЂ” never silently dropped
+- Review queue: findings the consolidation guardrails reject are surfaced for explicit resolution (create, link to existing, or dismiss) — never silently dropped
 - Meeting detail page renders the parsed AI analysis: status, executive summary, progress, milestones, and every finding with its details
-- Manual item resolution: resolve/reopen risks and blockers, complete/reopen action items directly from the project overview вЂ” no meeting required; every action is recorded as a history event
+- Manual item resolution: resolve/reopen risks and blockers, complete/reopen action items directly from the project overview — no meeting required; every action is recorded as a history event
 - Status report export: one-click Markdown report (page view or `.md` download) covering delivery status, progress, open and resolved work, decisions, and a counts summary
 - Consolidation decisions for new findings:
-  - **CREATE** вЂ” genuinely new information
-  - **MERGE** вЂ” same underlying information with different wording
-  - **UPDATE** вЂ” existing item with changed information
-  - **CONFLICT** вЂ” new information contradicts existing memory
+  - **CREATE** — genuinely new information
+  - **MERGE** — same underlying information with different wording
+  - **UPDATE** — existing item with changed information
+  - **CONFLICT** — new information contradicts existing memory
 - Immutable meeting records containing the original input and AI analysis
 - Cross-project dashboard: every project at a glance - delivery status, progress, open risk/blocker/action counts, meeting count, and last meeting date
+- Cross-project metrics dashboard: KPI totals (projects, meetings, decisions, open work) and charts built with recharts - projects by delivery status, open items mix, meetings and open work per project, risks by impact (open vs resolved), a monthly activity timeline, and action items by owner, themed light/dark like the rest of the app
 - History page with type filters (per-type counts), links from every event to its meeting, and before/after field diffs for changes
 - Immutable history events for memory changes
 - JSON API served by FastAPI behind the unchanged UI; validation failures surface as structured error notices
@@ -50,7 +51,7 @@ The project is designed around a practical delivery-management problem: **the sa
 
 Each project has three complementary layers:
 
-### 1. Meetings вЂ” source records
+### 1. Meetings — source records
 
 Meetings are retained as the original source of information. A meeting stores:
 
@@ -62,7 +63,7 @@ Meetings are retained as the original source of information. A meeting stores:
 
 This preserves the original AI output even when the current project state changes later.
 
-### 2. Current project memory вЂ” operational state
+### 2. Current project memory — operational state
 
 The application maintains the current state of:
 
@@ -72,7 +73,7 @@ The application maintains the current state of:
 - project status and progress
 - project decisions
 
-### 3. History вЂ” audit trail
+### 3. History — audit trail
 
 Memory changes are recorded as immutable history events linked to the meeting that caused them.
 
@@ -115,7 +116,7 @@ MemoryConsolidator
 Project memory + history
 ```
 
-Before anything reaches the LLM, `matching.py` resolves findings that exactly match an existing item's canonical title вЂ” including resolved and completed items: unchanged duplicates become MERGE entries, explicit status changes become UPDATE entries (closing or reopening), and duplicate decisions merge into the existing append-only record, all without an LLM call. The remaining findings go to `MemoryConsolidator` annotated with a `candidate_ids` shortlist of similar existing items, which keeps the model from inventing ids. Candidates are ranked semantically: item titles carry a stored embedding (baai/bge-m3 via the OpenRouter embeddings endpoint, backfilled lazily on the next meeting after an item is created), each new meeting's finding titles are embedded in one batched call, and candidates are ordered by cosine similarity. When embeddings are unavailable the ranking falls back to lexical token overlap. After the plan returns, CREATE entries that collide with an existing canonical title are downgraded to MERGE.
+Before anything reaches the LLM, `matching.py` resolves findings that exactly match an existing item's canonical title — including resolved and completed items: unchanged duplicates become MERGE entries, explicit status changes become UPDATE entries (closing or reopening), and duplicate decisions merge into the existing append-only record, all without an LLM call. The remaining findings go to `MemoryConsolidator` annotated with a `candidate_ids` shortlist of similar existing items, which keeps the model from inventing ids. Candidates are ranked semantically: item titles carry a stored embedding (baai/bge-m3 via the OpenRouter embeddings endpoint, backfilled lazily on the next meeting after an item is created), each new meeting's finding titles are embedded in one batched call, and candidates are ordered by cosine similarity. When embeddings are unavailable the ranking falls back to lexical token overlap. After the plan returns, CREATE entries that collide with an existing canonical title are downgraded to MERGE.
 
 Every memory item stores a `canonical_title` identity column, and partial unique indexes enforce one row per canonical title per project. Re-submitting identical meeting notes is rejected before any AI call, so repeated uploads never mutate memory twice.
 
@@ -125,7 +126,7 @@ This separation is intentional: the AI proposes a consolidation plan, while the 
 
 ### Current limitation
 
-Title normalization, canonical titles, fuzzy and embedding-based candidate shortlists are deterministic, but the final CREATE/MERGE/UPDATE/CONFLICT decision is still **LLM-based**. Because LLM output is probabilistic, semantically equivalent items can still occasionally be classified as `CREATE` when the model fails to recognize them as such вЂ” even when the semantic layer puts the right item in the candidate list.
+Title normalization, canonical titles, fuzzy and embedding-based candidate shortlists are deterministic, but the final CREATE/MERGE/UPDATE/CONFLICT decision is still **LLM-based**. Because LLM output is probabilistic, semantically equivalent items can still occasionally be classified as `CREATE` when the model fails to recognize them as such — even when the semantic layer puts the right item in the candidate list.
 
 For example:
 
@@ -276,6 +277,21 @@ Apply the version-controlled schema migrations:
 python -m alembic -c migrations/alembic.ini upgrade head
 ```
 
+## Docker quickstart
+
+The fastest way to run the full stack (FastAPI + built React SPA + PostgreSQL):
+
+```powershell
+docker compose up -d --build
+```
+
+Open http://127.0.0.1:8001
+
+- `db`: PostgreSQL 16 with the persistent `pgdata_ai2` volume; the schema is created from `schema.sql` on first start
+- `app`: the FastAPI application serving the JSON API, the untouched static/ design assets, and the built React SPA on host port 8001, with a container healthcheck on `/api/health`
+
+The Alembic migrations in `migrations/` are for local runs without Docker (see [Database setup](#database-setup)); the Docker stack initializes its schema from `schema.sql` and does not run Alembic.
+
 ## Run locally
 
 Build the frontend once (pnpm): see frontend/ (pnpm --dir frontend install, then pnpm --dir frontend build).
@@ -304,7 +320,7 @@ Then:
 Run the application test suite with:
 
 ```powershell
-python -m unittest discover -s tests
+python -m pytest tests/test_api.py
 ```
 
 The repository also includes independent development/testing code for the memory consolidation layer as that feature evolves.
@@ -313,9 +329,9 @@ The repository also includes independent development/testing code for the memory
 
 The project intentionally separates three responsibilities:
 
-1. **AI extraction** вЂ” determine what the meeting says.
-2. **AI consolidation** вЂ” determine how new findings relate to existing project memory.
-3. **Database application** вЂ” apply the selected decision safely and preserve an audit trail.
+1. **AI extraction** — determine what the meeting says.
+2. **AI consolidation** — determine how new findings relate to existing project memory.
+3. **Database application** — apply the selected decision safely and preserve an audit trail.
 
 This separation makes the consolidation logic testable independently from the HTTP layer and database workflow, and allows the reconciliation strategy to evolve without replacing the underlying project-memory model.
 

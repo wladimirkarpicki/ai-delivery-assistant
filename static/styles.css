@@ -58,6 +58,7 @@ small, .hint, label span { color: var(--muted-foreground); }
 .pane,
 .status-card,
 .cards .panel,
+.kpi-strip,
 pre,
 .notice {
   border-width: 0;
@@ -416,10 +417,90 @@ article p { margin-top: var(--space-2xs); }
    transparency: the panes turn opaque and keep their rim and shadow,
    which is most of what they were. */
 @media (prefers-reduced-transparency: reduce) {
-  .pane, .status-card, .cards .panel, pre, .notice,
+  .pane, .status-card, .cards .panel, .kpi-strip, pre, .notice,
   .command-palette, .app-header, .command-trigger, .icon-button,
   .button, button, .inline-form button {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+}
+
+/* ---- Metrics dashboard --------------------------------------------------------
+
+   The KPI strip is one pane of glass, not six cards: the totals stand
+   shoulder to shoulder, separated by hairlines. The chart panels ride
+   the existing .cards grid, so they keep the card recipe, the
+   responsive columns, and the rhythm of the project cards below
+   them. Chart colors live in frontend/src/lib/chartTheme.ts and
+   mirror the tokens in tokens.css. */
+
+.kpi-strip {
+  margin-block: var(--space-xl) 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  background-color: var(--card);
+  border-radius: var(--radius-card);
+  overflow: clip;
+}
+.kpi {
+  min-width: 0;
+  padding: var(--space-sm) var(--space-md);
+  display: grid;
+  gap: var(--space-3xs);
+}
+.kpi:nth-child(even) { border-inline-start: 1px solid var(--border); }
+.kpi:nth-child(n+3) { border-block-start: 1px solid var(--border); }
+.kpi-label {
+  font: 600 var(--text-xs)/1.2 var(--font-mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.kpi-value {
+  font: 600 var(--text-2xl)/1.1 var(--font-display);
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Panels start at their natural height: one panel's footer legend
+   must not stretch its row partner into a bordered void. */
+.metrics-grid { align-items: start; }
+.metrics-grid .panel > h2 { margin-bottom: var(--space-2xs); }
+.chart-sub {
+  margin-block: 0 var(--space-sm);
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+}
+.chart-body { height: 16rem; }
+.chart-body--wide { height: 20rem; }
+.chart-empty {
+  margin-block: var(--space-lg);
+  color: var(--muted-foreground);
+}
+.chart-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-md);
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.chart-legend li { display: inline-flex; align-items: center; gap: var(--space-3xs); }
+.chart-legend .swatch {
+  inline-size: .625rem;
+  block-size: .625rem;
+  border-radius: .1875rem;
+}
+.dashboard-projects { margin-top: var(--space-lg); }
+
+@media (min-width: 40rem) {
+  .metrics-grid .panel--wide { grid-column: 1 / -1; }
+}
+@media (min-width: 60rem) {
+  .kpi-strip { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .kpi:nth-child(even) { border-inline-start: 0; }
+  .kpi:nth-child(n+3) { border-block-start: 0; }
+  .kpi + .kpi { border-inline-start: 1px solid var(--border); }
 }
