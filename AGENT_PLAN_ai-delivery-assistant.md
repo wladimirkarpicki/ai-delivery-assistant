@@ -1,12 +1,12 @@
 # Agent Plan — ai-delivery-assistant
 Last updated: 2026-10-22 13:50
-Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-10-22 12:43 (= Last updated глобала при последней сверке)
+Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-10-24 13:00 (= Last updated глобала при последней сверке)
 Роль: проектный агент (ai-delivery-assistant) — работа с кодинг-сабагентами; задачи — от главного агента (Team Lead) или пользователя.
 
 ## Status
-- Active focus: проект на паузе. Ветка 001 смержена в main (merge --no-ff, 2026-10-22), ветка удалена локально и на origin; тесты зелёные: `python -m pytest tests/test_api.py → 12 passed` (2026-10-22 12:44, блокер multipart исчез — пакет корректно установлен в системном Python); GitHub полностью актуален.
+- Active focus: 004 — кросс-проектный метрики-дашборд (KPI + пайчарты/бары/таймлайн, recharts) на ветке feature/004-metrics-dashboard; пауза снята прямым запросом пользователя (2026-10-24). Предыстория: ветка 001 смержена в main (2026-10-22), 12 тестов passed.
 - Blocked: —
-- Risks: orphaned-том pgdata_ai (fs-повреждён, не удаляется) остаётся в vhdx — чистка отложена; Docker Desktop на USB D: умирает при перезагрузках машины (3-й раз: ночь 21→22.10, npipe not found) — каждый нештатный останов = риск порчи томов, перед выключением машины выходить из Docker Desktop вручную; диск C: критичен (~0.6 ГБ free); на origin ~15 устаревших веток (не мешают).
+- Risks: orphaned-том pgdata_ai (fs-повреждён, не удаляется) остаётся в vhdx — чистка отложена; Docker Desktop на USB D: умирает при перезагрузках машины (3-й раз: ночь 21→22.10, npipe not found) — каждый нештатный останов = риск порчи томов, перед выключением машины выходить из Docker Desktop вручную; диск C: ~3.6 ГБ free (нормализовано, было 0.6); на origin ~15 устаревших веток (не мешают).
 
 ## Tasks
 | ID | Task | Status | Branch | AC / Verification | Evidence |
@@ -14,6 +14,7 @@ Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-1
 | 001 | Собрать Docker-образ (FastAPI + React Vite), compose up, мигрировать данные из локального Postgres | completed (merged в main 2026-10-22) | feature/001-docker-fullstack | `docker compose ps → app healthy; curl /api/health → 200; curl / → index.html; curl /docs → 200; DB: 7 projects / 16 meetings / 59 events; pytest → 12 passed` | Build exit 0; api/health 200; / 200 text/html; /docs 200; DB counts match local; compose.yml + schema.sql + monitoring committed; чекап 2026-10-21: контейнеры Up (healthy), /api/health 200, DB 7/16/59; финал 2026-10-22: pytest 12 passed, merge --no-ff в main, push, ветка удалена |
 | 002 | Cleanup stale feature branches (19 слияных) | completed | main | `git branch -l` → только main + feature/001-docker-fullstack | Чекап 2026-10-21: локально только main и feature/001; на origin осталось ~15 устаревших веток |
 | 003 | Инцидент-ревери: восстановление стека после fs-повреждения тома pgdata_ai + повторная миграция данных + скриншоты 8 страниц | completed | feature/001-docker-fullstack | `docker compose ps → 2 healthy; /api/health → 200; DB counts 7/16/59/9/9/6; 8 валидных PNG 1440x900` | compose down/up на новом томе pgdata_ai2 exit 0; pg_dump 111747 Б → psql restore exit 0; counts exact match; /api/health 200; screenshots 01-08 (169-240 КБ, Pillow-валидны) |
+| 004 | Кросс-проектный метрики-дашборд: /api/metrics + recharts (KPI, пай статусов/импактов, donut open items, бары по проектам и владельцам, area-таймлайн) + README-апдейт (Docker, pytest, mojibake) | in_progress | feature/004-metrics-dashboard | `pnpm --dir frontend build → exit 0; tsc → 0 errors; pytest tests/test_api.py → все зелёные; curl /api/metrics → 200` | — |
 
 ## Task details
 ### 001 — Docker full-stack build + data migration
@@ -38,6 +39,13 @@ AC: 16 валидных PNG 1440x900; данные 7/16/59/9/9/6
 Verification: `ls screenshots/*.png` → 16 файлов; Pillow validation pass
 Constraints: USB disk latency, Docker restart after crash
 
+### 004 — Кросс-проектный метрики-дашборд
+Goal: Красивый дашборд с метриками по всем проектам: пайчарты и другие типы графиков (recharts), светл/тём темы.
+Scope: api.py — новый /api/metrics (totals, status_distribution, open_items_mix, per_project, risk_impacts, activity_timeline, action_owners); frontend — recharts@3, DashboardPage: KPI-плитки + сетка графиков + существующие карточки ниже; useTheme-хук (data-theme) + палитры light/dark; тесты /api/metrics; README: Docker-quickstart, метрики-дашборд, pytest-команда, mojibake-фикс («вЂ”» → «—»).
+AC: /api/metrics → 200 со всеми агрегатами; дашборд рендерит KPI + ≥6 графиков в обеих темах; build + tsc → exit 0; pytest → все зелёные (12 старых не сломаны); docker rebuild → /api/metrics 200 на :8001.
+Verification: pnpm --dir frontend build; pnpm --dir frontend typecheck; python -m pytest tests/test_api.py; docker compose up -d --build; curl http://127.0.0.1:8001/api/metrics.
+Constraints: recharts — единственная новая зависимость; не трогать models.py/схему БД и /api/dashboard; коммиты только на feature-ветке, git add по конкретным файлам (screenshots/ и AGENT_PLAN не коммитить — план ведёт Lead).
+
 ## Decisions
 - 2026-10-18 — план создан (миграция на глобальный шаблон v2); процесс живёт в `.dsh/AGENTS.md`, здесь — только состояние.
 - 2026-10-20 — Docker Desktop на D:\Docker\wsl через NTFS-junction (Infra / Machine in ENVIRONMENT.md).
@@ -49,6 +57,7 @@ Constraints: USB disk latency, Docker restart after crash
 - 2026-10-21 — План Synced: глобал 18:48, план 13:20.
 - 2026-10-21 — Инцидент pgdata_ai: fs-повреждение (EBADMSG) после нештатного останова Docker Desktop; точечное лечение (rm файлов, docker volume rm) невозможно — переименовали том в compose.yml на pgdata_ai2, старый оставлен orphaned для безопасной чистки позже; данные восстановлены повторным pg_dump из локального PG 18.4 (источник истины жив, localhost:5432).
 - 2026-10-22 — Merge ветки 001 в main (merge --no-ff) выполнен после зелёных тестов (12 passed) — блокер multipart исчез сам: пакет python-multipart корректно встал в системный Python, код проекта не менялся; ветка удалена локально и на origin; проект переведён на паузу (по прямому запросу пользователя).
+- 2026-10-24 — Пауза снята прямым запросом пользователя: заказан метрики-дашборд (004). Выбран recharts@3 (React 19, SVG-чарты, темизация через useTheme-хук на data-theme); README-апдейт влит в 004 — README от 18.10 не отражал Docker-стек и pytest-команду, содержал mojibake «вЂ”».
 
 ## Learnings
 - 2026-10-20 — Инфраструктура: Docker Desktop (WSL2) на внешнем накопителе D: (junction) — см. `ENVIRONMENT.md` (Infra / Machine).
