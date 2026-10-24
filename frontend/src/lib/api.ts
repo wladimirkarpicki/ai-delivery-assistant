@@ -163,6 +163,63 @@ export interface DashboardRow {
   last_meeting: string | null
 }
 
+export interface MetricsTotals {
+  projects: number
+  meetings: number
+  decisions: number
+  history_events: number
+  open_risks: number
+  open_blockers: number
+  open_actions: number
+}
+
+export interface StatusDistributionEntry {
+  status: string
+  count: number
+}
+
+export interface OpenItemsMixEntry {
+  kind: "risks" | "blockers" | "actions"
+  count: number
+}
+
+export interface PerProjectMetrics {
+  project_id: number
+  name: string
+  meetings: number
+  open_risks: number
+  open_blockers: number
+  open_actions: number
+}
+
+export interface RiskImpactMetrics {
+  impact: string
+  open: number
+  resolved: number
+}
+
+export interface ActivityTimelineEntry {
+  month: string
+  meetings: number
+  events: number
+}
+
+export interface ActionOwnerMetrics {
+  owner: string
+  open: number
+  completed: number
+}
+
+export interface Metrics {
+  totals: MetricsTotals
+  status_distribution: StatusDistributionEntry[]
+  open_items_mix: OpenItemsMixEntry[]
+  per_project: PerProjectMetrics[]
+  risk_impacts: RiskImpactMetrics[]
+  activity_timeline: ActivityTimelineEntry[]
+  action_owners: ActionOwnerMetrics[]
+}
+
 export interface HealthInfo {
   analysis_ready: boolean
   model: string | null
@@ -207,6 +264,10 @@ export function getHealth(): Promise<HealthInfo> {
 
 export function getDashboard(): Promise<{ rows: DashboardRow[] }> {
   return request<{ rows: DashboardRow[] }>("/api/dashboard")
+}
+
+export function getMetrics(): Promise<Metrics> {
+  return request<Metrics>("/api/metrics")
 }
 
 export function getProjects(): Promise<{ projects: ProjectSummary[] }> {
