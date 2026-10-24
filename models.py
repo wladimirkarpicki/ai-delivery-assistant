@@ -148,3 +148,12 @@ class ReviewResolution(db.Model):  # type: ignore[name-defined]
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
 
     history_event = db.relationship("HistoryEvent", back_populates="review_resolution")
+
+
+class User(db.Model):  # type: ignore[name-defined]
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), nullable=False, unique=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default="user")
