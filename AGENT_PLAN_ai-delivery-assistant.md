@@ -1,10 +1,10 @@
 # Agent Plan — ai-delivery-assistant
-Last updated: 2026-10-22 13:50
+Last updated: 2026-10-24 22:31
 Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-10-24 13:00 (= Last updated глобала при последней сверке)
 Роль: проектный агент (ai-delivery-assistant) — работа с кодинг-сабагентами; задачи — от главного агента (Team Lead) или пользователя.
 
 ## Status
-- Active focus: 004 — кросс-проектный метрики-дашборд (KPI + пайчарты/бары/таймлайн, recharts) на ветке feature/004-metrics-dashboard; пауза снята прямым запросом пользователя (2026-10-24). Предыстория: ветка 001 смержена в main (2026-10-22), 12 тестов passed.
+- Active focus: 005 — аутентификация с ролями admin/user (по образцу inventory-management-system), стартует после merge 004. 004 (метрики-дашборд) выполнен и верифицирован 2026-10-24: 16 passed, build+tsc зелёные, /api/metrics 200 в Docker-стеке, скриншоты light/dark сняты; merge в main и push — в этом цикле.
 - Blocked: —
 - Risks: orphaned-том pgdata_ai (fs-повреждён, не удаляется) остаётся в vhdx — чистка отложена; Docker Desktop на USB D: умирает при перезагрузках машины (3-й раз: ночь 21→22.10, npipe not found) — каждый нештатный останов = риск порчи томов, перед выключением машины выходить из Docker Desktop вручную; диск C: ~3.6 ГБ free (нормализовано, было 0.6); на origin ~15 устаревших веток (не мешают).
 
@@ -14,7 +14,7 @@ Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-1
 | 001 | Собрать Docker-образ (FastAPI + React Vite), compose up, мигрировать данные из локального Postgres | completed (merged в main 2026-10-22) | feature/001-docker-fullstack | `docker compose ps → app healthy; curl /api/health → 200; curl / → index.html; curl /docs → 200; DB: 7 projects / 16 meetings / 59 events; pytest → 12 passed` | Build exit 0; api/health 200; / 200 text/html; /docs 200; DB counts match local; compose.yml + schema.sql + monitoring committed; чекап 2026-10-21: контейнеры Up (healthy), /api/health 200, DB 7/16/59; финал 2026-10-22: pytest 12 passed, merge --no-ff в main, push, ветка удалена |
 | 002 | Cleanup stale feature branches (19 слияных) | completed | main | `git branch -l` → только main + feature/001-docker-fullstack | Чекап 2026-10-21: локально только main и feature/001; на origin осталось ~15 устаревших веток |
 | 003 | Инцидент-ревери: восстановление стека после fs-повреждения тома pgdata_ai + повторная миграция данных + скриншоты 8 страниц | completed | feature/001-docker-fullstack | `docker compose ps → 2 healthy; /api/health → 200; DB counts 7/16/59/9/9/6; 8 валидных PNG 1440x900` | compose down/up на новом томе pgdata_ai2 exit 0; pg_dump 111747 Б → psql restore exit 0; counts exact match; /api/health 200; screenshots 01-08 (169-240 КБ, Pillow-валидны) |
-| 004 | Кросс-проектный метрики-дашборд: /api/metrics + recharts (KPI, пай статусов/импактов, donut open items, бары по проектам и владельцам, area-таймлайн) + README-апдейт (Docker, pytest, mojibake) | in_progress | feature/004-metrics-dashboard | `pnpm --dir frontend build → exit 0; tsc → 0 errors; pytest tests/test_api.py → все зелёные; curl /api/metrics → 200` | — |
+| 004 | Кросс-проектный метрики-дашборд: /api/metrics + recharts (KPI, пай статусов/импактов, donut open items, бары по проектам и владельцам, area-таймлайн) + README-апдейт (Docker, pytest, mojibake) | completed | feature/004-metrics-dashboard | `pnpm --dir frontend build → exit 0; tsc → 0 errors; pytest tests/test_api.py → 16 passed; curl /api/metrics → 200` | Коммиты 37838a7 (backend + 4 теста) / 295c8b2 (recharts-фронт, useTheme+chartTheme) / f83a295 (README Docker/pytest/mojibake); Lead-верификация 2026-10-24: pytest 16 passed 4.67s, ревью api.py (агрегаты пакетные, outerjoin unknown) и DashboardPage, docker rebuild → /api/metrics 200 (totals 7/16/9/59, статусы unknown 5/at risk 1/on track 1, impacts high 4/unknown 5, owners 5 строк), /api/health 200, скриншоты 09-11 light/full/dark (Pillow mean 225/30) |
 | 005 | Аутентификация с ролями admin/user по образцу inventory-management-system: users-таблица, JWT HS256, lockout 5 неудач/15 мин, bootstrap-админ, admin-CRUD пользователей, last-admin защита, SPA login/setup/users | pending | feature/005-auth-roles | `без токена /api/projects → 401; user → 403 на /api/users; login lockout → 429; last-admin demote/delete → 400; build+tsc+pytest зелёные` | — |
 
 ## Task details
@@ -91,3 +91,4 @@ Constraints: паттерн и UX — как inventory-management-system (JWT be
 - ✅ 002 — Git branch cleanup: 19 merged branches deleted (feature/001-docker-fullstack)
 - ✅ 003 — Инцидент-ревери pgdata_ai → pgdata_ai2 + повторная миграция данных + скриншоты 8 страниц (2026-10-21)
 - ✅ Merge 001 в main (12 passed, merge --no-ff, ветка удалена локально и на origin) — проект на паузе (2026-10-22)
+- ✅ 004 — Метрики-дашборд (/api/metrics + recharts: KPI, пай статусов/импактов, donut, бары, area-таймлайн, обе темы, a11y) — 16 passed, /api/metrics 200 в стеке, скриншоты light/dark (2026-10-24)
