@@ -50,6 +50,7 @@ from models import (
     HistoryEvent,
     Meeting,
     Project,
+    ProjectState,
     ReviewResolution,
     Risk,
 )
@@ -512,6 +513,169 @@ def create_app(router_instance=None, database_url=None):
             })
 
         return {"rows": rows}
+
+    @app.get("/api/metrics")
+    def metrics():
+        """
+        Cross-project metrics for the dashboard charts, aggregated in a
+        fixed number of batched queries - no per-project round trips,
+        the same discipline as the dashboard rows.
+
+        Month bucketing happens in Python rather than SQL date
+        functions: the test suite runs on SQLite and production on
+        PostgreSQL, and created_at comes back as a plain datetime from
+        both, so grouping needs no dialect-specific SQL.
+        """
+        totals = {
+            "projects": Project.query.count(),
+            "meetings": Meeting.query.count(),
+            "decisions": Decision.query.count(),
+            "history_events": HistoryEvent.query.count(),
+            "open_risks": Risk.query.filter_by(status="open").count(),
+            "open_blockers": Blocker.query.filter_by(status="open").count(),
+            "open_actions": ActionItem.query.filter_by(status="open").count(),
+        }
+
+        # Delivery status over every project; projects without a state
+        # count as "unknown". Human-readable keys, the same
+        # replace("_", " ") the dashboard rows use.
+        status_counts: dict[str, int] = {}
+
+        for status, count in (
+            db.session.query(ProjectState.delivery_status, db.func.count(Project.id))
+            .outerjoin(ProjectState, ProjectState.project_id == Project.id)
+            .group_by(ProjectState.delivery_status)
+            .all()
+        ):
+            key = (status or "unknown").replace("_", " ")
+            status_counts[key] = status_counts.get(key, 0) + int(count)
+
+        status_distribution = [
+            {"status": status, "count": count}
+            for status, count in sorted(
+                status_counts.items(), key=lambda item: (-item[1], item[0])
+            )
+        ]
+
+        open_items_mix = [
+            {"kind": "risks", "count": totals["open_risks"]},
+            {"kind": "blockers", "count": totals["open_blockers"]},
+            {"kind": "actions", "count": totals["open_actions"]},
+        ]
+
+        def counts_by_project(model, status=None):
+            query = db.session.query(model.project_id, db.func.count(model.id))
+
+            if status is not None:
+                query = query.filter(model.status == status)
+
+            return {
+                project_id: int(count)
+                for project_id, count in query.group_by(model.project_id).all()
+            }
+
+        meeting_counts = counts_by_project(Meeting)
+        open_risk_counts = counts_by_project(Risk, "open")
+        open_blocker_counts = counts_by_project(Blocker, "open")
+        open_action_counts = counts_by_project(ActionItem, "open")
+
+        per_project = [
+            {
+                "project_id": project.id,
+                "name": project.name,
+                "meetings": meeting_counts.get(project.id, 0),
+                "open_risks": open_risk_counts.get(project.id, 0),
+                "open_blockers": open_blocker_counts.get(project.id, 0),
+                "open_actions": open_action_counts.get(project.id, 0),
+            }
+            for project in Project.query.order_by(Project.updated_at.desc()).all()
+        ]
+
+        # Risk impact breakdown: every impact present in the data
+        # (including "unknown"), each with its open and resolved
+        # counts. Statuses outside open/resolved are not counted.
+        impact_counts: dict[str, dict[str, int]] = {}
+
+        for impact, status, count in (
+            db.session.query(Risk.impact, Risk.status, db.func.count(Risk.id))
+            .group_by(Risk.impact, Risk.status)
+            .all()
+        ):
+            bucket = impact_counts.setdefault(
+                impact or "unknown", {"open": 0, "resolved": 0}
+            )
+
+            if status in bucket:
+                bucket[status] += int(count)
+
+        impact_order = {"high": 0, "medium": 1, "low": 2, "unknown": 3}
+
+        risk_impacts = [
+            {"impact": impact, "open": counts["open"], "resolved": counts["resolved"]}
+            for impact, counts in sorted(
+                impact_counts.items(),
+                key=lambda item: (impact_order.get(item[0], 4), item[0]),
+            )
+        ]
+
+        def month_counts(model):
+            counts: dict[tuple[int, int], int] = {}
+
+            for (created_at,) in db.session.query(model.created_at).all():
+                if created_at is None:
+                    continue
+
+                key = (created_at.year, created_at.month)
+                counts[key] = counts.get(key, 0) + 1
+
+            return counts
+
+        meeting_months = month_counts(Meeting)
+        event_months = month_counts(HistoryEvent)
+
+        activity_timeline = [
+            {
+                "month": f"{year:04d}-{month:02d}",
+                "meetings": meeting_months.get((year, month), 0),
+                "events": event_months.get((year, month), 0),
+            }
+            for year, month in sorted(set(meeting_months) | set(event_months))
+        ]
+
+        # Action items by owner; a missing owner reads as "unassigned".
+        owner_counts: dict[str, dict[str, int]] = {}
+
+        for owner, status, count in (
+            db.session.query(
+                ActionItem.owner, ActionItem.status, db.func.count(ActionItem.id)
+            )
+            .group_by(ActionItem.owner, ActionItem.status)
+            .all()
+        ):
+            bucket = owner_counts.setdefault(
+                owner or "unassigned", {"open": 0, "completed": 0}
+            )
+
+            if status in bucket:
+                bucket[status] += int(count)
+
+        action_owners = [
+            {"owner": owner, "open": counts["open"], "completed": counts["completed"]}
+            for owner, counts in sorted(
+                owner_counts.items(),
+                key=lambda item: (-item[1]["open"], item[0]),
+            )
+        ]
+
+        return {
+            "totals": totals,
+            "status_distribution": status_distribution,
+            "open_items_mix": open_items_mix,
+            "per_project": per_project,
+            "risk_impacts": risk_impacts,
+            "activity_timeline": activity_timeline,
+            "action_owners": action_owners,
+        }
 
     @app.get("/api/projects")
     def projects_list():
