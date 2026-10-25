@@ -855,7 +855,15 @@ def create_app(router_instance=None, database_url=None):
         functions: the test suite runs on SQLite and production on
         PostgreSQL, and created_at comes back as a plain datetime from
         both, so grouping needs no dialect-specific SQL.
+
+        resolution_rate is the share of risks, blockers, and actions
+        ever recorded that are no longer open (resolved/completed). An
+        empty ledger reads as 1.0: with nothing pending, nothing is
+        outstanding. meetings_last_30d counts meetings created in the
+        trailing 30 days.
         """
+        cutoff_30d = datetime.now(UTC) - timedelta(days=30)
+
         totals = {
             "projects": Project.query.count(),
             "meetings": Meeting.query.count(),
@@ -864,7 +872,30 @@ def create_app(router_instance=None, database_url=None):
             "open_risks": Risk.query.filter_by(status="open").count(),
             "open_blockers": Blocker.query.filter_by(status="open").count(),
             "open_actions": ActionItem.query.filter_by(status="open").count(),
+            "resolved_risks": Risk.query.filter_by(status="resolved").count(),
+            "resolved_blockers": Blocker.query.filter_by(status="resolved").count(),
+            "resolved_actions": ActionItem.query.filter_by(status="completed").count(),
+            "meetings_last_30d": Meeting.query.filter(
+                Meeting.created_at >= cutoff_30d
+            ).count(),
         }
+
+        # Resolution rate over every risk, blocker, and action ever
+        # recorded: resolved / (resolved + open). Zero work means
+        # nothing is outstanding, which reads as a full 1.0.
+        resolved_total = (
+            totals["resolved_risks"]
+            + totals["resolved_blockers"]
+            + totals["resolved_actions"]
+        )
+        outstanding_total = (
+            totals["open_risks"] + totals["open_blockers"] + totals["open_actions"]
+        )
+        resolution_rate = (
+            resolved_total / (resolved_total + outstanding_total)
+            if (resolved_total + outstanding_total) > 0
+            else 1.0
+        )
 
         # Delivery status over every project; projects without a state
         # count as "unknown". Human-readable keys, the same
@@ -885,12 +916,6 @@ def create_app(router_instance=None, database_url=None):
             for status, count in sorted(
                 status_counts.items(), key=lambda item: (-item[1], item[0])
             )
-        ]
-
-        open_items_mix = [
-            {"kind": "risks", "count": totals["open_risks"]},
-            {"kind": "blockers", "count": totals["open_blockers"]},
-            {"kind": "actions", "count": totals["open_actions"]},
         ]
 
         def counts_by_project(model, status=None):
@@ -999,8 +1024,8 @@ def create_app(router_instance=None, database_url=None):
 
         return {
             "totals": totals,
+            "resolution_rate": resolution_rate,
             "status_distribution": status_distribution,
-            "open_items_mix": open_items_mix,
             "per_project": per_project,
             "risk_impacts": risk_impacts,
             "activity_timeline": activity_timeline,
