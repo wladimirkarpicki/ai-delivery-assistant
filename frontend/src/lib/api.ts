@@ -3,7 +3,12 @@
  *
  * All shapes mirror the JSON serializers on the server one-to-one;
  * validation failures surface as ApiError with the server's message.
+ * Every request carries the bearer token from lib/auth.ts; when the
+ * API refuses a token that was sent (401), the token is dead and the
+ * client returns to the sign-in page.
  */
+
+import { getToken, removeToken, type AuthUser } from "./auth"
 
 export class ApiError extends Error {
   status: number
@@ -16,9 +21,23 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init)
+  const headers = new Headers(init?.headers)
+  const token = getToken()
+
+  if (token) headers.set("Authorization", `Bearer ${token}`)
+
+  const response = await fetch(path, { ...init, headers })
 
   if (!response.ok) {
+    // A 401 for an authenticated request means the token is gone
+    // (expired, revoked, account deleted): drop it and sign in
+    // again. Unauthenticated 401s are ordinary login refusals and
+    // stay on the sign-in page as errors.
+    if (response.status === 401 && token) {
+      removeToken()
+      window.location.assign("/login")
+    }
+
     let message = `${response.status} ${response.statusText}`
 
     try {
@@ -383,4 +402,103 @@ export function manualResolve(
       body: JSON.stringify({ action, note }),
     },
   )
+}
+
+// ---------------------------------------------------------------------------
+// Authentication and users
+
+export interface AuthResponse {
+  access_token: string
+  token_type: string
+  user: AuthUser
+}
+
+export interface UserRow {
+  id: number
+  username: string
+  role: "user" | "admin"
+  is_you: boolean
+}
+
+export interface UserCreateInput {
+  username: string
+  password: string
+  role: "user" | "admin"
+}
+
+export function authLogin(
+  username: string,
+  password: string,
+): Promise<AuthResponse> {
+  return request<AuthResponse>("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export function authSetup(
+  username: string,
+  password: string,
+): Promise<AuthResponse> {
+  return request<AuthResponse>("/api/auth/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export function getMe(): Promise<AuthUser> {
+  return request<AuthUser>("/api/auth/me")
+}
+
+export function changeOwnPassword(
+  currentPassword: string,
+  password: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/api/auth/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password: currentPassword, password }),
+  })
+}
+
+export function getUsers(): Promise<UserRow[]> {
+  return request<UserRow[]>("/api/users")
+}
+
+export function createUser(input: UserCreateInput): Promise<UserRow> {
+  return request<UserRow>("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateUser(
+  userId: number,
+  body: { role?: "user" | "admin"; password?: string },
+): Promise<UserRow> {
+  return request<UserRow>(`/api/users/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export function deleteUser(userId: number): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/users/${userId}`, {
+    method: "DELETE",
+  })
+}
+
+export function resetUserPassword(
+  userId: number,
+  password: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/users/${userId}/password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  })
 }
