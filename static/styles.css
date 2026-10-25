@@ -305,6 +305,20 @@ pre {
 .page-heading > div { min-width: 0; display: grid; gap: var(--space-xs); }
 .page-heading p { max-width: 62ch; color: var(--muted-foreground); }
 
+/* The dashboard runs its heading on one baseline row (user request):
+   the whole metric band fits a laptop viewport, so the section
+   heading sheds its display size and its lead paragraph, and the
+   page container opens with less air above it. */
+.page-heading--compact { padding-bottom: var(--space-sm); }
+.page-heading--compact > div {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+.page-heading--compact h1 { font-size: var(--text-xl); }
+.container:has(.page-heading--compact) { padding-block-start: var(--space-sm); }
+
 /* Standalone panels and forms keep the divider style: a hairline over
    a section of the page, not a pane. */
 .panel, form, .result, .workspace-section {
@@ -601,7 +615,7 @@ article p { margin-top: var(--space-2xs); }
    at full size. */
 
 .kpi-strip {
-  margin-block: var(--space-lg) 0;
+  margin-block: var(--space-sm) 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   background-color: var(--card);
@@ -637,12 +651,12 @@ article p { margin-top: var(--space-2xs); }
 .metrics-grid {
   align-items: stretch;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-md);
-  margin-top: var(--space-md);
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
 }
 .metrics-grid .panel {
   border-top: 0;
-  padding-block: var(--space-sm);
+  padding-block: var(--space-xs);
   padding-inline: var(--space-md);
   display: flex;
   flex-direction: column;
@@ -665,8 +679,8 @@ article p { margin-top: var(--space-2xs); }
    tuned for: axis labels never wrap, they ellipsize in the tick
    formatter instead. */
 .metrics-grid .recharts-cartesian-axis-tick text { white-space: nowrap; }
-.chart-body { height: 11rem; }
-.chart-body--wide { height: 13rem; }
+.chart-body { height: 10rem; }
+.chart-body--wide { height: 11.5rem; }
 .chart-empty {
   margin-block: var(--space-lg);
   color: var(--muted-foreground);

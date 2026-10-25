@@ -608,12 +608,11 @@ export default function DashboardPage() {
 
   return (
     <>
-      <div className="page-heading">
+      <div className="page-heading page-heading--compact">
         <div>
           <Link to="/projects">← Projects</Link>
           <span className="eyebrow">Cross-project view</span>
           <h1>Dashboard</h1>
-          <p>Every project at a glance.</p>
         </div>
       </div>
 
