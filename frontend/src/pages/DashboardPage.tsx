@@ -23,10 +23,12 @@ import { useTheme } from "../lib/useTheme"
 import { fmtDate, humanStatus, plural } from "../lib/format"
 
 /**
- * The cross-project dashboard: KPI tiles and a grid of recharts
- * panels fed by /api/metrics, with the original project cards from
- * /api/dashboard below. Both requests load in parallel; the page
- * renders each band as its data arrives.
+ * The cross-project dashboard, v2: a KPI strip of the six numbers that
+ * matter, five meaningful charts (delivery status, open-risk profile,
+ * open work per project, actions by owner, activity timeline), and the
+ * original project cards below. Both requests load in parallel; each
+ * band renders as its data arrives. No chart animations, quiet axes,
+ * and empty states that stay out of the way.
  */
 
 /** Shown when /api/metrics itself fails, so the charts degrade to their empty states. */
@@ -39,23 +41,29 @@ const EMPTY_METRICS: Metrics = {
     open_risks: 0,
     open_blockers: 0,
     open_actions: 0,
+    resolved_risks: 0,
+    resolved_blockers: 0,
+    resolved_actions: 0,
+    meetings_last_30d: 0,
   },
+  resolution_rate: 1.0,
   status_distribution: [],
-  open_items_mix: [],
   per_project: [],
   risk_impacts: [],
   activity_timeline: [],
   action_owners: [],
 }
 
-const KIND_LABELS: Record<"risks" | "blockers" | "actions", string> = {
-  risks: "Risks",
-  blockers: "Blockers",
-  actions: "Actions",
-}
+/** The impacts the risk-profile donut shows, worst first. */
+const IMPACT_ORDER = ["high", "medium", "low"] as const
 
 function ellipsize(value: string, max = 18): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value
+}
+
+/** "unknown" reads as "Not started" everywhere on the dashboard. */
+function statusLabel(status: string): string {
+  return status === "unknown" ? "Not started" : humanStatus(status)
 }
 
 /** A chart panel: heading, hint line, the chart (or its empty state), and an optional footer legend. */
@@ -94,6 +102,16 @@ function ChartPanel(props: {
   )
 }
 
+/** A donut with its total standing in the hole: the quietest way to read a share. */
+function DonutHole(props: { value: number | string; label: string }) {
+  return (
+    <div className="donut-center" aria-hidden="true">
+      <span className="donut-center__value">{props.value}</span>
+      <span className="donut-center__label">{props.label}</span>
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   const theme = useTheme()
   const t = chartTheme(theme)
@@ -128,58 +146,100 @@ export default function DashboardPage() {
     <span style={{ color: t.axis, fontSize: "0.75rem" }}>{String(value)}</span>
   )
 
+  const statusColorOf = (status: string): string => {
+    switch (status.replace(/\s+/g, "_")) {
+      case "delivered":
+        return t.status.delivered
+      case "on_track":
+        return t.status.on_track
+      case "at_risk":
+        return t.status.at_risk
+      case "blocked":
+        return t.status.blocked
+      default:
+        return t.status.unknown
+    }
+  }
+
+  const impactColorOf = (impact: string): string => {
+    switch (impact) {
+      case "high":
+        return t.impact.high
+      case "medium":
+        return t.impact.medium
+      case "low":
+        return t.impact.low
+      default:
+        return t.muted
+    }
+  }
+
   // Chart data, derived straight from the metrics payload.
   const statusData = m.status_distribution.map((entry) => ({
-    name: entry.status,
+    status: entry.status,
+    name: statusLabel(entry.status),
     value: entry.count,
   }))
+
+  // Only open risks, by impact; unknown-impact risks join as a muted
+  // "Not assessed" slice so the donut always matches the KPI count.
+  const impactData: Array<{ impact: string; label: string; open: number }> =
+    IMPACT_ORDER.map((impact) => {
+      const entry = m.risk_impacts.find((candidate) => candidate.impact === impact)
+      return {
+        impact,
+        label: impact[0].toUpperCase() + impact.slice(1),
+        open: entry ? entry.open : 0,
+      }
+    })
+
+  const unknownImpact = m.risk_impacts.find(
+    (candidate) => candidate.impact === "unknown",
+  )
+
+  if (unknownImpact && unknownImpact.open > 0) {
+    impactData.push({
+      impact: "unknown",
+      label: "Not assessed",
+      open: unknownImpact.open,
+    })
+  }
+
+  const openImpacts = impactData.filter((entry) => entry.open > 0)
+
+  // Top six projects by currently open work.
+  const openWork = m.per_project
+    .map((project) => ({
+      name: project.name,
+      open_risks: project.open_risks,
+      open_blockers: project.open_blockers,
+      open_actions: project.open_actions,
+      open_total: project.open_risks + project.open_blockers + project.open_actions,
+    }))
+    .filter((project) => project.open_total > 0)
+    .sort((a, b) => b.open_total - a.open_total)
+    .slice(0, 6)
+
   const openTotal =
     m.totals.open_risks + m.totals.open_blockers + m.totals.open_actions
-  const mixData = m.open_items_mix.map((entry) => ({
-    kind: entry.kind,
-    name: KIND_LABELS[entry.kind],
-    value: entry.count,
-  }))
-  const meetingsData = m.per_project.map((project) => ({
-    name: project.name,
-    meetings: project.meetings,
-  }))
-  const impactTotal = m.risk_impacts.reduce(
-    (sum, entry) => sum + entry.open + entry.resolved,
-    0,
-  )
-  const openImpacts = m.risk_impacts
-    .filter((entry) => entry.open > 0)
-    .map((entry) => ({
-      impact: entry.impact,
-      name: `${entry.impact} (open)`,
-      value: entry.open,
-    }))
-  const resolvedImpacts = m.risk_impacts
-    .filter((entry) => entry.resolved > 0)
-    .map((entry) => ({
-      impact: entry.impact,
-      name: `${entry.impact} (resolved)`,
-      value: entry.resolved,
-    }))
-  const impactColorOf = (impact: string) => {
-    const index = m.risk_impacts.findIndex((entry) => entry.impact === impact)
-    return t.categorical[(index < 0 ? 0 : index) % t.categorical.length]
-  }
   const ownersTotal = m.action_owners.reduce(
     (sum, entry) => sum + entry.open + entry.completed,
     0,
   )
-  const perProjectHeight = Math.max(256, 44 * m.per_project.length + 24)
-  const ownersHeight = Math.max(256, 44 * m.action_owners.length + 24)
+  const openWorkHeight = Math.max(220, 38 * openWork.length + 24)
 
-  const kpis: Array<{ label: string; value: number }> = [
-    { label: "Projects", value: m.totals.projects },
-    { label: "Meetings", value: m.totals.meetings },
-    { label: "Decisions", value: m.totals.decisions },
+  // Six KPIs, each one answerable at a glance.
+  const activeProjects = m.status_distribution
+    .filter((entry) => entry.status !== "unknown")
+    .reduce((sum, entry) => sum + entry.count, 0)
+
+  const kpis: Array<{ label: string; value: number | string }> = [
+    { label: "Active projects", value: activeProjects },
     { label: "Open risks", value: m.totals.open_risks },
-    { label: "Open blockers", value: m.totals.open_blockers },
     { label: "Open actions", value: m.totals.open_actions },
+    { label: "Open blockers", value: m.totals.open_blockers },
+    { label: "Resolution rate", value: `${Math.round(m.resolution_rate * 100)}%` },
+    { label: "Meetings · 30d", value: m.totals.meetings_last_30d },
   ]
 
   return (
@@ -213,89 +273,130 @@ export default function DashboardPage() {
             label={`Projects by delivery status: ${statusData
               .map((entry) => `${entry.name} ${entry.value}`)
               .join(", ")}`}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={statusData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius="75%"
-                  isAnimationActive={false}
-                >
-                  {statusData.map((entry, index) => (
-                    <Cell
-                      key={entry.name}
-                      fill={t.categorical[index % t.categorical.length]}
+            footer={
+              <ul className="chart-legend">
+                {statusData.map((entry) => (
+                  <li key={entry.status}>
+                    <span
+                      className="swatch"
+                      style={{ backgroundColor: statusColorOf(entry.status) }}
                     />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                />
-                <Legend formatter={renderLegend} />
-              </PieChart>
-            </ResponsiveContainer>
-          </ChartPanel>
-
-          <ChartPanel
-            title="Open items mix"
-            hint="Risks, blockers, and actions currently open, across every project."
-            empty={openTotal === 0 ? "No open risks, blockers, or actions." : null}
-            label={`Open items by kind: ${mixData
-              .map((entry) => `${entry.name} ${entry.value}`)
-              .join(", ")}`}
+                    {entry.name}: {entry.value}
+                  </li>
+                ))}
+              </ul>
+            }
           >
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={mixData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius="55%"
-                  outerRadius="80%"
-                  isAnimationActive={false}
-                >
-                  {mixData.map((entry) => (
-                    <Cell key={entry.kind} fill={t.kind[entry.kind]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                />
-                <Legend formatter={renderLegend} />
-              </PieChart>
-            </ResponsiveContainer>
+            <div className="donut">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={statusData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius="60%"
+                    outerRadius="82%"
+                    paddingAngle={2}
+                    stroke="none"
+                    isAnimationActive={false}
+                  >
+                    {statusData.map((entry) => (
+                      <Cell
+                        key={entry.status}
+                        fill={statusColorOf(entry.status)}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={tooltipContentStyle}
+                    labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <DonutHole value={m.totals.projects} label="projects" />
+            </div>
           </ChartPanel>
 
           <ChartPanel
-            title="Meetings per project"
-            hint="How many meetings each project has stored."
+            title="Risk profile"
+            hint="Open risks by impact; resolution progress lives in the KPI strip."
+            empty={m.totals.open_risks === 0 ? "No open risks." : null}
+            label={`Open risks by impact: ${openImpacts
+              .map((entry) => `${entry.label} ${entry.open}`)
+              .join(", ")}`}
+            footer={
+              <ul className="chart-legend">
+                {openImpacts.map((entry) => (
+                  <li key={entry.impact}>
+                    <span
+                      className="swatch"
+                      style={{ backgroundColor: impactColorOf(entry.impact) }}
+                    />
+                    {entry.label}: {entry.open} open
+                  </li>
+                ))}
+              </ul>
+            }
+          >
+            <div className="donut">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={openImpacts}
+                    dataKey="open"
+                    nameKey="label"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius="60%"
+                    outerRadius="82%"
+                    paddingAngle={2}
+                    stroke="none"
+                    isAnimationActive={false}
+                  >
+                    {openImpacts.map((entry) => (
+                      <Cell
+                        key={entry.impact}
+                        fill={impactColorOf(entry.impact)}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={tooltipContentStyle}
+                    labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <DonutHole value={m.totals.open_risks} label="open risks" />
+            </div>
+          </ChartPanel>
+
+          <ChartPanel
+            title="Open work by project"
+            hint="Open risks, blockers, and actions, top six projects."
             empty={
               m.per_project.length === 0
                 ? "No projects yet."
-                : m.totals.meetings === 0
-                  ? "No meetings recorded yet."
+                : openTotal === 0
+                  ? "No open risks, blockers, or actions."
                   : null
             }
-            label={`Meetings per project: ${meetingsData
-              .map((entry) => `${entry.name} ${entry.meetings}`)
-              .join(", ")}`}
-            height={perProjectHeight}
+            label={`Open work per project: ${openWork
+              .map(
+                (project) =>
+                  `${project.name}: ${project.open_risks} risks, ${project.open_blockers} blockers, ${project.open_actions} actions`,
+              )
+              .join("; ")}`}
+            height={openWorkHeight}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={meetingsData}
+                data={openWork}
                 layout="vertical"
-                margin={{ top: 8, right: 16, bottom: 0, left: 8 }}
+                margin={{ top: 4, right: 16, bottom: 0, left: 8 }}
               >
                 <CartesianGrid
                   strokeDasharray="3 3"
@@ -306,78 +407,17 @@ export default function DashboardPage() {
                   type="number"
                   allowDecimals={false}
                   tick={axisTick}
-                  axisLine={{ stroke: t.grid }}
+                  axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
                   type="category"
                   dataKey="name"
-                  width={120}
+                  width={140}
                   tick={axisTick}
                   tickFormatter={(value: string) => ellipsize(value)}
-                  axisLine={{ stroke: t.grid }}
-                  tickLine={false}
-                />
-                <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                  cursor={{ fill: t.grid }}
-                />
-                <Bar
-                  dataKey="meetings"
-                  name="Meetings"
-                  fill={t.categorical[0]}
-                  radius={[0, 4, 4, 0]}
-                  barSize={16}
-                  isAnimationActive={false}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartPanel>
-
-          <ChartPanel
-            title="Open work per project"
-            hint="Open risks, blockers, and actions stacked per project."
-            empty={
-              m.per_project.length === 0
-                ? "No projects yet."
-                : openTotal === 0
-                  ? "No open risks, blockers, or actions."
-                  : null
-            }
-            label={`Open work per project: ${m.per_project
-              .map(
-                (project) =>
-                  `${project.name}: ${project.open_risks} risks, ${project.open_blockers} blockers, ${project.open_actions} actions`,
-              )
-              .join("; ")}`}
-            height={perProjectHeight}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={m.per_project}
-                margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke={t.grid}
-                  vertical={false}
-                />
-                <XAxis
-                  dataKey="name"
-                  tick={axisTick}
-                  tickFormatter={(value: string) => ellipsize(value, 12)}
-                  axisLine={{ stroke: t.grid }}
-                  tickLine={false}
-                  interval={0}
-                />
-                <YAxis
-                  allowDecimals={false}
-                  tick={axisTick}
                   axisLine={false}
                   tickLine={false}
-                  width={36}
                 />
                 <Tooltip
                   contentStyle={tooltipContentStyle}
@@ -391,6 +431,7 @@ export default function DashboardPage() {
                   name="Risks"
                   stackId="open"
                   fill={t.kind.risks}
+                  barSize={12}
                   isAnimationActive={false}
                 />
                 <Bar
@@ -398,6 +439,7 @@ export default function DashboardPage() {
                   name="Blockers"
                   stackId="open"
                   fill={t.kind.blockers}
+                  barSize={12}
                   isAnimationActive={false}
                 />
                 <Bar
@@ -405,7 +447,8 @@ export default function DashboardPage() {
                   name="Actions"
                   stackId="open"
                   fill={t.kind.actions}
-                  radius={[4, 4, 0, 0]}
+                  barSize={12}
+                  radius={[0, 4, 4, 0]}
                   isAnimationActive={false}
                 />
               </BarChart>
@@ -413,74 +456,7 @@ export default function DashboardPage() {
           </ChartPanel>
 
           <ChartPanel
-            title="Risks by impact"
-            hint="Inner ring: open risks. Outer ring: resolved risks, dimmed."
-            empty={impactTotal === 0 ? "No risks recorded yet." : null}
-            label={`Risks by impact: ${m.risk_impacts
-              .map(
-                (entry) =>
-                  `${entry.impact}: ${entry.open} open, ${entry.resolved} resolved`,
-              )
-              .join("; ")}`}
-            footer={
-              <ul className="chart-legend">
-                {m.risk_impacts.map((entry) => (
-                  <li key={entry.impact}>
-                    <span
-                      className="swatch"
-                      style={{ backgroundColor: impactColorOf(entry.impact) }}
-                    />
-                    {entry.impact}: {entry.open} open, {entry.resolved} resolved
-                  </li>
-                ))}
-              </ul>
-            }
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={openImpacts}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius="38%"
-                  outerRadius="64%"
-                  isAnimationActive={false}
-                >
-                  {openImpacts.map((entry) => (
-                    <Cell key={entry.name} fill={impactColorOf(entry.impact)} />
-                  ))}
-                </Pie>
-                <Pie
-                  data={resolvedImpacts}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius="68%"
-                  outerRadius="92%"
-                  isAnimationActive={false}
-                >
-                  {resolvedImpacts.map((entry) => (
-                    <Cell
-                      key={entry.name}
-                      fill={impactColorOf(entry.impact)}
-                      fillOpacity={0.45}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </ChartPanel>
-
-          <ChartPanel
-            title="Action items by owner"
+            title="Actions by owner"
             hint="Open and completed action items per owner; unowned items count as unassigned."
             empty={ownersTotal === 0 ? "No action items yet." : null}
             label={`Action items by owner: ${m.action_owners
@@ -489,7 +465,6 @@ export default function DashboardPage() {
                   `${entry.owner}: ${entry.open} open, ${entry.completed} completed`,
               )
               .join("; ")}`}
-            height={ownersHeight}
           >
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
@@ -505,7 +480,7 @@ export default function DashboardPage() {
                   dataKey="owner"
                   tick={axisTick}
                   tickFormatter={(value: string) => ellipsize(value, 12)}
-                  axisLine={{ stroke: t.grid }}
+                  axisLine={false}
                   tickLine={false}
                   interval={0}
                 />
@@ -514,7 +489,7 @@ export default function DashboardPage() {
                   tick={axisTick}
                   axisLine={false}
                   tickLine={false}
-                  width={36}
+                  width={32}
                 />
                 <Tooltip
                   contentStyle={tooltipContentStyle}
@@ -528,6 +503,7 @@ export default function DashboardPage() {
                   name="Open"
                   stackId="owner"
                   fill={t.kind.actions}
+                  barSize={26}
                   isAnimationActive={false}
                 />
                 <Bar
@@ -535,6 +511,7 @@ export default function DashboardPage() {
                   name="Completed"
                   stackId="owner"
                   fill={t.muted}
+                  barSize={26}
                   radius={[4, 4, 0, 0]}
                   isAnimationActive={false}
                 />
@@ -543,7 +520,7 @@ export default function DashboardPage() {
           </ChartPanel>
 
           <ChartPanel
-            title="Activity timeline"
+            title="Activity"
             hint="Meetings analyzed and history events recorded, by month."
             wide
             bodyClass="chart-body--wide"
@@ -568,7 +545,7 @@ export default function DashboardPage() {
                 <XAxis
                   dataKey="month"
                   tick={axisTick}
-                  axisLine={{ stroke: t.grid }}
+                  axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
@@ -576,7 +553,7 @@ export default function DashboardPage() {
                   tick={axisTick}
                   axisLine={false}
                   tickLine={false}
-                  width={36}
+                  width={32}
                 />
                 <Tooltip
                   contentStyle={tooltipContentStyle}
@@ -591,7 +568,7 @@ export default function DashboardPage() {
                   name="History events"
                   stroke={t.categorical[1]}
                   fill={t.categorical[1]}
-                  fillOpacity={0.16}
+                  fillOpacity={0.14}
                   strokeWidth={2}
                   isAnimationActive={false}
                 />
@@ -601,7 +578,7 @@ export default function DashboardPage() {
                   name="Meetings"
                   stroke={t.categorical[0]}
                   fill={t.categorical[0]}
-                  fillOpacity={0.16}
+                  fillOpacity={0.14}
                   strokeWidth={2}
                   isAnimationActive={false}
                 />

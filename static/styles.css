@@ -425,14 +425,19 @@ article p { margin-top: var(--space-2xs); }
   }
 }
 
-/* ---- Metrics dashboard --------------------------------------------------------
+/* ---- Metrics dashboard (v2) ------------------------------------------------
 
    The KPI strip is one pane of glass, not six cards: the totals stand
    shoulder to shoulder, separated by hairlines. The chart panels ride
    the existing .cards grid, so they keep the card recipe, the
    responsive columns, and the rhythm of the project cards below
    them. Chart colors live in frontend/src/lib/chartTheme.ts and
-   mirror the tokens in tokens.css. */
+   mirror the tokens in tokens.css.
+
+   Spacing: the strip and every band below it keep a full section gap
+   (the v1 grid sat flush against the strip); the chart panels get air
+   at their edges and no stray rule at the top - the glass card is the
+   only frame a chart needs. */
 
 .kpi-strip {
   margin-block: var(--space-xl) 0;
@@ -463,8 +468,13 @@ article p { margin-top: var(--space-2xs); }
 }
 
 /* Panels start at their natural height: one panel's footer legend
-   must not stretch its row partner into a bordered void. */
-.metrics-grid { align-items: start; }
+   must not stretch its row partner into a bordered void. The grid
+   keeps a section-sized gap below the KPI strip. */
+.metrics-grid { align-items: start; margin-top: var(--space-lg); }
+.metrics-grid .panel {
+  border-top: 0;
+  padding-inline: var(--space-lg);
+}
 .metrics-grid .panel > h2 { margin-bottom: var(--space-2xs); }
 .chart-sub {
   margin-block: 0 var(--space-sm);
@@ -493,7 +503,34 @@ article p { margin-top: var(--space-2xs); }
   block-size: .625rem;
   border-radius: .1875rem;
 }
-.dashboard-projects { margin-top: var(--space-lg); }
+
+/* Donuts carry their total in the hole: one quiet number instead of
+   a labelled axis. */
+.donut { position: relative; height: 100%; }
+.donut-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: var(--space-3xs);
+  text-align: center;
+  pointer-events: none;
+}
+.donut-center__value {
+  font: 600 var(--text-lg)/1.1 var(--font-display);
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.donut-center__label {
+  font: 600 var(--text-xs)/1.2 var(--font-mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* The project cards are their own band, a section apart from the
+   charts above them. */
+.dashboard-projects { margin-top: var(--space-xl); }
 
 @media (min-width: 40rem) {
   .metrics-grid .panel--wide { grid-column: 1 / -1; }

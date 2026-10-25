@@ -24,7 +24,7 @@ export interface ChartTheme {
     /** --popover-foreground */
     text: string
   }
-  /** Consistent kind colors across the mix donut and stacked bars. */
+  /** Consistent kind colors across the stacked bars. */
   kind: {
     risks: string
     blockers: string
@@ -32,6 +32,20 @@ export interface ChartTheme {
   }
   /** Muted series: completed counts, resolved partners. */
   muted: string
+  /** Delivery-status palette: every status gets its own reading. */
+  status: {
+    delivered: string
+    on_track: string
+    at_risk: string
+    blocked: string
+    unknown: string
+  }
+  /** Open-risk severity: high reads worst, low reads calm. */
+  impact: {
+    high: string
+    medium: string
+    low: string
+  }
 }
 
 const LIGHT: ChartTheme = {
@@ -58,6 +72,18 @@ const LIGHT: ChartTheme = {
     actions: "oklch(0.55 0.13 166)",
   },
   muted: "oklch(0.5 0.05 265)",
+  status: {
+    delivered: "oklch(0.55 0.13 166)",
+    on_track: "oklch(0.58 0.15 152)",
+    at_risk: "oklch(0.66 0.15 75)",
+    blocked: "oklch(0.577 0.245 27.325)",
+    unknown: "oklch(0.5 0.05 265)",
+  },
+  impact: {
+    high: "oklch(0.577 0.245 27.325)",
+    medium: "oklch(0.66 0.15 75)",
+    low: "oklch(0.55 0.13 166)",
+  },
 }
 
 const DARK: ChartTheme = {
@@ -84,6 +110,18 @@ const DARK: ChartTheme = {
     actions: "oklch(0.78 0.13 166)",
   },
   muted: "oklch(0.72 0.02 265)",
+  status: {
+    delivered: "oklch(0.78 0.13 166)",
+    on_track: "oklch(0.74 0.16 152)",
+    at_risk: "oklch(0.8 0.14 85)",
+    blocked: "oklch(0.704 0.191 22.216)",
+    unknown: "oklch(0.72 0.02 265)",
+  },
+  impact: {
+    high: "oklch(0.704 0.191 22.216)",
+    medium: "oklch(0.8 0.14 85)",
+    low: "oklch(0.78 0.13 166)",
+  },
 }
 
 export function chartTheme(theme: Theme): ChartTheme {
