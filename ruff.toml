@@ -1,0 +1,10 @@
+# Ruff configuration.
+#
+# FastAPI's canonical dependency injection places Depends() calls in
+# argument defaults; B008 is a false positive for that idiom (the
+# inventory-management-system reference ships the same ignore).
+
+[lint]
+ignore = [
+    "B008", # Do not perform function call in argument defaults (FastAPI Depends() is the standard pattern)
+]

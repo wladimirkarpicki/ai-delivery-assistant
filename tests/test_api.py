@@ -5,12 +5,15 @@ an in-memory sqlite database keeps every test isolated.
 """
 
 import json
+import os
 import unittest
 from datetime import UTC, datetime
 from typing import ClassVar
 
 from fastapi.testclient import TestClient
+from werkzeug.security import generate_password_hash
 
+import api as api_module
 from api import create_app
 from database import db
 from models import (
@@ -20,7 +23,12 @@ from models import (
     Meeting,
     Project,
     Risk,
+    User,
 )
+
+# The JWT signing key only has to exist and stay constant for the
+# process; it is read once per create_app() call below.
+os.environ.setdefault("JWT_SECRET_KEY", "unit-test-secret-key-0123456789abcdef")
 
 
 class FakeRouter:
@@ -54,11 +62,31 @@ class FakeRouter:
 
 
 class ApiTests(unittest.TestCase):
+    ADMIN_USERNAME = "admin"
+    ADMIN_PASSWORD = "admin-pass-123"
+    REGULAR_USERNAME = "regular"
+    REGULAR_PASSWORD = "regular-pass-123"
+
     def setUp(self):
+        # In-process login rate limiting must not leak between tests.
+        api_module._failed_logins.clear()
+
         self.router = FakeRouter()
         self.app = create_app(self.router, "sqlite://")
         db.create_all()
         self.client = TestClient(self.app)
+
+        # Every business endpoint requires a signed-in account since
+        # the auth feature, so the suite-wide client is an admin and a
+        # regular account exists for role checks.
+        self.admin_id = self.create_user_direct(
+            self.ADMIN_USERNAME, self.ADMIN_PASSWORD, role="admin"
+        )
+        self.regular_id = self.create_user_direct(
+            self.REGULAR_USERNAME, self.REGULAR_PASSWORD
+        )
+        self.admin_token = self.login(self.ADMIN_USERNAME, self.ADMIN_PASSWORD)
+        self.client.headers["Authorization"] = f"Bearer {self.admin_token}"
 
     def tearDown(self):
         db.session.remove()
@@ -66,6 +94,30 @@ class ApiTests(unittest.TestCase):
 
     # ------------------------------------------------------------------
     # Helpers
+
+    def create_user_direct(self, username, password, role="user"):
+        """Create an account straight in the test database."""
+        account = User(
+            username=username,
+            password_hash=generate_password_hash(password),
+            role=role,
+        )
+        db.session.add(account)
+        db.session.commit()
+        return account.id
+
+    def login(self, username, password):
+        response = self.client.post(
+            "/api/auth/login", json={"username": username, "password": password}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["access_token"]
+
+    def authed_client(self, token):
+        """A fresh client carrying the given bearer token."""
+        client = TestClient(self.app)
+        client.headers["Authorization"] = f"Bearer {token}"
+        return client
 
     def create_project(self, name="Phoenix", description="Release project"):
         response = self.client.post(
@@ -584,6 +636,281 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["risk_impacts"], [])
         self.assertEqual(body["activity_timeline"], [])
         self.assertEqual(body["action_owners"], [])
+
+
+    # ------------------------------------------------------------------
+    # Authentication
+
+    def test_setup_bootstraps_first_admin_only_once(self):
+        db.session.query(User).delete()
+        db.session.commit()
+
+        first = self.client.post(
+            "/api/auth/setup",
+            json={"username": "founder", "password": "founder-pass-123"},
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        body = first.json()
+        self.assertEqual(body["user"]["role"], "admin")
+        self.assertTrue(body["access_token"])
+
+        # A second bootstrap is refused while any user exists.
+        second = self.client.post(
+            "/api/auth/setup",
+            json={"username": "other", "password": "other-pass-123"},
+        )
+        self.assertEqual(second.status_code, 400)
+        self.assertIn("already completed", second.json()["detail"])
+
+    def test_setup_rejects_short_password(self):
+        db.session.query(User).delete()
+        db.session.commit()
+
+        response = self.client.post(
+            "/api/auth/setup",
+            json={"username": "founder", "password": "short"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at least 8 characters", response.json()["detail"])
+
+    def test_login_ok_wrong_password_and_unknown_user(self):
+        wrong = self.client.post(
+            "/api/auth/login",
+            json={"username": self.REGULAR_USERNAME, "password": "wrong-pass"},
+        )
+        self.assertEqual(wrong.status_code, 401)
+
+        unknown = self.client.post(
+            "/api/auth/login",
+            json={"username": "ghost", "password": "whatever-pass"},
+        )
+        self.assertEqual(unknown.status_code, 401)
+
+        ok = self.client.post(
+            "/api/auth/login",
+            json={"username": self.REGULAR_USERNAME, "password": self.REGULAR_PASSWORD},
+        )
+        self.assertEqual(ok.status_code, 200, ok.text)
+        body = ok.json()
+        self.assertEqual(body["user"]["username"], self.REGULAR_USERNAME)
+        self.assertEqual(body["user"]["role"], "user")
+        self.assertTrue(body["access_token"])
+
+    def test_login_locks_after_five_failures(self):
+        for _ in range(5):
+            response = self.client.post(
+                "/api/auth/login",
+                json={"username": self.REGULAR_USERNAME, "password": "wrong-pass"},
+            )
+            self.assertEqual(response.status_code, 401)
+
+        # Even the correct password is locked out now.
+        locked = self.client.post(
+            "/api/auth/login",
+            json={"username": self.REGULAR_USERNAME, "password": self.REGULAR_PASSWORD},
+        )
+        self.assertEqual(locked.status_code, 429)
+        self.assertIn("15 minutes", locked.json()["detail"])
+
+        # The lockout only affects the targeted username.
+        other = self.client.post(
+            "/api/auth/login",
+            json={"username": self.ADMIN_USERNAME, "password": self.ADMIN_PASSWORD},
+        )
+        self.assertEqual(other.status_code, 200)
+
+    def test_me_requires_a_valid_token(self):
+        anonymous = TestClient(self.app)
+        self.assertEqual(anonymous.get("/api/auth/me").status_code, 401)
+
+        garbage = TestClient(self.app)
+        garbage.headers["Authorization"] = "Bearer not-a-jwt"
+        self.assertEqual(garbage.get("/api/auth/me").status_code, 401)
+
+        response = self.client.get("/api/auth/me")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["username"], self.ADMIN_USERNAME)
+        self.assertEqual(response.json()["role"], "admin")
+
+    def test_token_of_deleted_account_is_rejected(self):
+        token = self.login(self.REGULAR_USERNAME, self.REGULAR_PASSWORD)
+        client = self.authed_client(token)
+        self.assertEqual(client.get("/api/auth/me").status_code, 200)
+
+        self.assertEqual(self.client.delete(f"/api/users/{self.regular_id}").status_code, 200)
+        self.assertEqual(client.get("/api/auth/me").status_code, 401)
+
+    def test_self_service_password_change(self):
+        response = self.client.post(
+            "/api/auth/password",
+            json={
+                "current_password": self.ADMIN_PASSWORD,
+                "password": "brand-new-pass-1",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+        old = self.client.post(
+            "/api/auth/login",
+            json={"username": self.ADMIN_USERNAME, "password": self.ADMIN_PASSWORD},
+        )
+        self.assertEqual(old.status_code, 401)
+
+        new = self.client.post(
+            "/api/auth/login",
+            json={"username": self.ADMIN_USERNAME, "password": "brand-new-pass-1"},
+        )
+        self.assertEqual(new.status_code, 200)
+
+    def test_password_change_requires_current_password(self):
+        response = self.client.post(
+            "/api/auth/password",
+            json={"current_password": "wrong-pass", "password": "brand-new-pass-1"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Current password is incorrect", response.json()["detail"])
+
+    # ------------------------------------------------------------------
+    # Users (admin management)
+
+    def test_users_endpoints_require_admin(self):
+        anonymous = TestClient(self.app)
+        self.assertEqual(anonymous.get("/api/users").status_code, 401)
+
+        user_client = self.authed_client(
+            self.login(self.REGULAR_USERNAME, self.REGULAR_PASSWORD)
+        )
+        self.assertEqual(user_client.get("/api/users").status_code, 403)
+
+        response = self.client.get("/api/users")
+        self.assertEqual(response.status_code, 200)
+        users = response.json()
+        self.assertEqual(
+            [u["username"] for u in users],
+            [self.ADMIN_USERNAME, self.REGULAR_USERNAME],
+        )
+        you = [u for u in users if u["is_you"]]
+        self.assertEqual(len(you), 1)
+        self.assertEqual(you[0]["username"], self.ADMIN_USERNAME)
+
+    def test_users_crud(self):
+        created = self.client.post(
+            "/api/users",
+            json={"username": "newbie", "password": "newbie-pass-123", "role": "user"},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        new_id = created.json()["id"]
+        self.assertEqual(created.json()["is_you"], False)
+
+        # Duplicate usernames are rejected.
+        duplicate = self.client.post(
+            "/api/users",
+            json={"username": "newbie", "password": "other-pass-123", "role": "user"},
+        )
+        self.assertEqual(duplicate.status_code, 400)
+
+        # Unknown roles are rejected.
+        bad_role = self.client.post(
+            "/api/users",
+            json={"username": "hacker", "password": "other-pass-123", "role": "root"},
+        )
+        self.assertEqual(bad_role.status_code, 400)
+        bad_patch = self.client.patch(f"/api/users/{new_id}", json={"role": "root"})
+        self.assertEqual(bad_patch.status_code, 400)
+
+        # Role change.
+        patched = self.client.patch(f"/api/users/{new_id}", json={"role": "admin"})
+        self.assertEqual(patched.status_code, 200, patched.text)
+        self.assertEqual(patched.json()["role"], "admin")
+
+        # Password change through the admin patch endpoint.
+        patched = self.client.patch(f"/api/users/{new_id}", json={"password": "patched-pass-123"})
+        self.assertEqual(patched.status_code, 200)
+        self.assertEqual(
+            self.client.post(
+                "/api/auth/login",
+                json={"username": "newbie", "password": "patched-pass-123"},
+            ).status_code,
+            200,
+        )
+
+        # Missing records -> 404.
+        self.assertEqual(
+            self.client.patch("/api/users/99999", json={"role": "user"}).status_code, 404
+        )
+        self.assertEqual(self.client.delete("/api/users/99999").status_code, 404)
+        self.assertEqual(
+            self.client.post("/api/users/99999/password", json={"password": "reset-pass-123"}).status_code,
+            404,
+        )
+
+        # Admin password reset gives access with the new password.
+        reset = self.client.post(
+            f"/api/users/{new_id}/password", json={"password": "reset-pass-123"}
+        )
+        self.assertEqual(reset.status_code, 200)
+        self.assertEqual(
+            self.client.post(
+                "/api/auth/login",
+                json={"username": "newbie", "password": "reset-pass-123"},
+            ).status_code,
+            200,
+        )
+
+        # Delete.
+        self.assertEqual(self.client.delete(f"/api/users/{new_id}").status_code, 200)
+        self.assertEqual(len(self.client.get("/api/users").json()), 2)
+
+    def test_last_admin_protections(self):
+        demote = self.client.patch(f"/api/users/{self.admin_id}", json={"role": "user"})
+        self.assertEqual(demote.status_code, 400)
+        self.assertIn("last remaining admin", demote.json()["detail"])
+
+        # Self-delete is its own refusal, checked before last-admin.
+        self_delete = self.client.delete(f"/api/users/{self.admin_id}")
+        self.assertEqual(self_delete.status_code, 400)
+        self.assertIn("delete yourself", self_delete.json()["detail"])
+
+        # A second admin can be demoted and deleted while one remains.
+        second = self.client.post(
+            "/api/users",
+            json={"username": "second-admin", "password": "second-pass-123", "role": "admin"},
+        )
+        self.assertEqual(second.status_code, 200)
+        second_id = second.json()["id"]
+
+        self.assertEqual(
+            self.client.patch(f"/api/users/{second_id}", json={"role": "user"}).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.delete(f"/api/users/{second_id}").status_code, 200
+        )
+
+    # ------------------------------------------------------------------
+    # Route protection
+
+    def test_health_stays_public_business_requires_auth(self):
+        anonymous = TestClient(self.app)
+
+        # The Docker healthcheck depends on this staying public.
+        self.assertEqual(anonymous.get("/api/health").status_code, 200)
+
+        for path in ("/api/dashboard", "/api/metrics", "/api/projects"):
+            self.assertEqual(anonymous.get(path).status_code, 401, path)
+
+        self.assertEqual(
+            anonymous.post("/api/projects", json={"name": "X"}).status_code, 401
+        )
+
+    def test_regular_user_can_read_business_endpoints(self):
+        user_client = self.authed_client(
+            self.login(self.REGULAR_USERNAME, self.REGULAR_PASSWORD)
+        )
+
+        self.assertEqual(user_client.get("/api/dashboard").status_code, 200)
+        self.assertEqual(user_client.get("/api/metrics").status_code, 200)
+        self.assertEqual(user_client.get("/api/projects").status_code, 200)
 
 
 if __name__ == "__main__":

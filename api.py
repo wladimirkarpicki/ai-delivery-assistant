@@ -17,17 +17,24 @@ in-memory database exactly as before.
 """
 
 import io
-from datetime import UTC, datetime
+import logging
+import secrets
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
+import jwt
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from analyzer import analyze_document, parse_analysis
 from config import DEFAULT_MODEL, DEFAULT_PROVIDER, EMBEDDING_MODEL
+from config_loader import get_jwt_secret_key, get_token_ttl_hours
 from database import (
     close_request_scope,
     configure_database,
@@ -53,6 +60,7 @@ from models import (
     ProjectState,
     ReviewResolution,
     Risk,
+    User,
 )
 from project_memory import (
     apply_consolidation_plan,
@@ -83,6 +91,75 @@ class ReviewResolve(BaseModel):
     action: str = ""
     target_item_id: int | None = None
     note: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Authentication (roles admin/user, JWT bearer sessions)
+
+
+class CredentialsIn(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1)
+
+
+class SetupIn(CredentialsIn):
+    pass
+
+
+class UserCreateIn(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=8)
+    role: str = "user"
+
+
+class UserPatchIn(BaseModel):
+    role: str | None = None
+    password: str | None = Field(default=None, min_length=8)
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str = Field(min_length=1)
+    password: str = Field(min_length=8)
+
+
+class PasswordResetIn(BaseModel):
+    password: str = Field(min_length=8)
+
+
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_LOCKOUT_SECONDS = 15 * 60
+
+# In-process login rate limiting: username -> (failures, first failure ts).
+_failed_logins: dict = {}
+
+
+def _register_failed_login(username: str) -> None:
+    now = time.monotonic()
+    count, first_ts = _failed_logins.get(username, (0, now))
+
+    if now - first_ts > LOGIN_LOCKOUT_SECONDS:
+        count, first_ts = 0, now
+
+    _failed_logins[username] = (count + 1, first_ts)
+
+
+def _login_is_locked(username: str) -> bool:
+    entry = _failed_logins.get(username)
+
+    if entry is None:
+        return False
+
+    count, first_ts = entry
+
+    if time.monotonic() - first_ts > LOGIN_LOCKOUT_SECONDS:
+        _failed_logins.pop(username, None)
+        return False
+
+    return count >= LOGIN_MAX_ATTEMPTS
+
+
+def _clear_failed_logins(username: str) -> None:
+    _failed_logins.pop(username, None)
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +537,259 @@ def create_app(router_instance=None, database_url=None):
 
         return response
 
+    # ------------------------------------------------------------------
+    # Authentication: JWT HS256 bearer sessions. The account is
+    # re-read from the database on every request, so tokens of
+    # deleted accounts stop working immediately.
+    secret_key = get_jwt_secret_key()
+
+    if not secret_key:
+        # The Docker healthcheck must not depend on .env: an
+        # ephemeral key keeps the API serving; only tokens reset
+        # on every restart.
+        secret_key = secrets.token_hex(32)
+        logging.getLogger("ai-delivery-assistant.auth").warning(
+            "JWT_SECRET_KEY is not set; generated an ephemeral key. "
+            "Tokens stop validating on every restart. "
+            "Set JWT_SECRET_KEY in .env for production."
+        )
+
+    token_ttl = timedelta(hours=get_token_ttl_hours())
+    _bearer = HTTPBearer(auto_error=False)
+
+    def create_token(user_id: int, username: str) -> str:
+        payload = {
+            "sub": str(user_id),
+            "username": username,
+            "exp": datetime.now(UTC) + token_ttl,
+        }
+        return jwt.encode(payload, secret_key, algorithm="HS256")
+
+    def get_current_user(
+        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    ) -> dict:
+        if credentials is None:
+            raise HTTPException(status_code=401, detail="Not authenticated.")
+
+        try:
+            payload = jwt.decode(
+                credentials.credentials, secret_key, algorithms=["HS256"]
+            )
+            user_id = int(payload.get("sub", ""))
+        except (jwt.PyJWTError, TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="Invalid or expired token.")
+
+        user = db.session.get(User, user_id)
+
+        if user is None:
+            raise HTTPException(status_code=401, detail="Account no longer exists.")
+
+        return {"id": user.id, "username": user.username, "role": user.role}
+
+    def require_admin(user: dict = Depends(get_current_user)) -> dict:
+        if user["role"] != "admin":
+            raise HTTPException(status_code=403, detail="Admin only.")
+        return user
+
+    @app.post("/api/auth/setup")
+    def auth_setup(data: SetupIn) -> dict:
+        """
+        Create the initial admin. Only available while no user exists.
+        """
+
+        if User.query.count() > 0:
+            raise HTTPException(status_code=400, detail="Setup is already completed.")
+
+        if len(data.password) < 8:
+            raise HTTPException(
+                status_code=400, detail="Password must be at least 8 characters."
+            )
+
+        if User.query.filter_by(username=data.username).first():
+            raise HTTPException(status_code=400, detail="Username already taken.")
+
+        user = User(
+            username=data.username,
+            password_hash=generate_password_hash(data.password),
+            role="admin",
+        )
+        db.session.add(user)
+        db.session.commit()
+
+        return {
+            "access_token": create_token(user.id, user.username),
+            "token_type": "bearer",  # nosec B105  # token_type is the OAuth2 scheme, not a password
+            "user": {"id": user.id, "username": user.username, "role": user.role},
+        }
+
+    @app.post("/api/auth/login")
+    def auth_login(data: CredentialsIn) -> dict:
+        """
+        Sign in with rate limiting: five failures per username lock it
+        for 15 minutes; a success clears the counter.
+        """
+
+        if _login_is_locked(data.username):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed attempts. Try again in 15 minutes.",
+            )
+
+        user = User.query.filter_by(username=data.username).first()
+
+        if user is None or not check_password_hash(user.password_hash, data.password):
+            _register_failed_login(data.username)
+            raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+        _clear_failed_logins(data.username)
+
+        return {
+            "access_token": create_token(user.id, user.username),
+            "token_type": "bearer",  # nosec B105  # token_type is the OAuth2 scheme, not a password
+            "user": {"id": user.id, "username": user.username, "role": user.role},
+        }
+
+    @app.get("/api/auth/me")
+    def auth_me(user: dict = Depends(get_current_user)) -> dict:
+        return user
+
+    @app.post("/api/auth/password")
+    def auth_change_password(
+        data: PasswordChangeIn,
+        user: dict = Depends(get_current_user),
+    ) -> dict:
+        """
+        Self-service password change; requires the current password.
+        """
+
+        account = db.session.get(User, user["id"])
+
+        if account is None:
+            raise HTTPException(status_code=401, detail="Account no longer exists.")
+
+        if not check_password_hash(account.password_hash, data.current_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect.")
+
+        account.password_hash = generate_password_hash(data.password)
+        db.session.commit()
+
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Users (admin only)
+
+    @app.get("/api/users")
+    def users_list(admin: dict = Depends(require_admin)) -> list:
+        return [
+            {
+                "id": account.id,
+                "username": account.username,
+                "role": account.role,
+                "is_you": account.id == admin["id"],
+            }
+            for account in User.query.order_by(User.id).all()
+        ]
+
+    @app.post("/api/users")
+    def users_create(data: UserCreateIn, admin: dict = Depends(require_admin)) -> dict:
+        if data.role not in ("user", "admin"):
+            raise HTTPException(status_code=400, detail="Role must be user or admin.")
+
+        if User.query.filter_by(username=data.username).first():
+            raise HTTPException(status_code=400, detail="Username already taken.")
+
+        user = User(
+            username=data.username,
+            password_hash=generate_password_hash(data.password),
+            role=data.role,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+        return {
+            "id": user.id,
+            "username": user.username,
+            "role": user.role,
+            "is_you": False,
+        }
+
+    @app.patch("/api/users/{user_id}")
+    def users_update(
+        user_id: int,
+        data: UserPatchIn,
+        admin: dict = Depends(require_admin),
+    ) -> dict:
+        user = db.session.get(User, user_id)
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        new_role = data.role if data.role is not None else user.role
+
+        if new_role not in ("user", "admin"):
+            raise HTTPException(status_code=400, detail="Role must be user or admin.")
+
+        if (
+            user.role == "admin"
+            and new_role != "admin"
+            and User.query.filter_by(role="admin").count() == 1
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="The last remaining admin cannot be demoted.",
+            )
+
+        user.role = new_role
+
+        if data.password is not None:
+            user.password_hash = generate_password_hash(data.password)
+
+        db.session.commit()
+
+        return {
+            "id": user.id,
+            "username": user.username,
+            "role": user.role,
+            "is_you": user.id == admin["id"],
+        }
+
+    @app.delete("/api/users/{user_id}")
+    def users_delete(user_id: int, admin: dict = Depends(require_admin)) -> dict:
+        if user_id == admin["id"]:
+            raise HTTPException(status_code=400, detail="You cannot delete yourself.")
+
+        user = db.session.get(User, user_id)
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        if user.role == "admin" and User.query.filter_by(role="admin").count() == 1:
+            raise HTTPException(
+                status_code=400,
+                detail="The last remaining admin cannot be deleted.",
+            )
+
+        db.session.delete(user)
+        db.session.commit()
+
+        return {"ok": True}
+
+    @app.post("/api/users/{user_id}/password")
+    def users_reset_password(
+        user_id: int,
+        data: PasswordResetIn,
+        admin: dict = Depends(require_admin),
+    ) -> dict:
+        user = db.session.get(User, user_id)
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        user.password_hash = generate_password_hash(data.password)
+        db.session.commit()
+
+        return {"ok": True}
+
     def _get_project(project_id):
         project = db.session.get(Project, project_id)
 
@@ -492,7 +822,7 @@ def create_app(router_instance=None, database_url=None):
         return {"analysis_ready": True, "model": selected_model, "error": None}
 
     @app.get("/api/dashboard")
-    def dashboard():
+    def dashboard(user: dict = Depends(get_current_user)):
         rows = []
 
         for project in Project.query.order_by(Project.updated_at.desc()).all():
@@ -515,7 +845,7 @@ def create_app(router_instance=None, database_url=None):
         return {"rows": rows}
 
     @app.get("/api/metrics")
-    def metrics():
+    def metrics(user: dict = Depends(get_current_user)):
         """
         Cross-project metrics for the dashboard charts, aggregated in a
         fixed number of batched queries - no per-project round trips,
@@ -678,7 +1008,7 @@ def create_app(router_instance=None, database_url=None):
         }
 
     @app.get("/api/projects")
-    def projects_list():
+    def projects_list(user: dict = Depends(get_current_user)):
         return {
             "projects": [
                 serialize_project_summary(project)
@@ -687,7 +1017,7 @@ def create_app(router_instance=None, database_url=None):
         }
 
     @app.post("/api/projects", status_code=201)
-    def projects_create(body: ProjectCreate):
+    def projects_create(body: ProjectCreate, user: dict = Depends(get_current_user)):
         name = (body.name or "").strip()
         description = (body.description or "").strip()
 
@@ -704,7 +1034,7 @@ def create_app(router_instance=None, database_url=None):
         return {"id": project.id, "name": project.name}
 
     @app.get("/api/projects/{project_id}")
-    def project_overview(project_id: int):
+    def project_overview(project_id: int, user: dict = Depends(get_current_user)):
         project = _get_project(project_id)
 
         needs_review_count = (
@@ -745,7 +1075,7 @@ def create_app(router_instance=None, database_url=None):
         }
 
     @app.get("/api/projects/{project_id}/meetings")
-    def project_meetings(project_id: int):
+    def project_meetings(project_id: int, user: dict = Depends(get_current_user)):
         project = _get_project(project_id)
 
         return {
@@ -759,6 +1089,7 @@ def create_app(router_instance=None, database_url=None):
         title: str = Form(""),
         meeting_notes: str = Form(""),
         meeting_file: UploadFile | None = None,
+        user: dict = Depends(get_current_user),
     ):
         project = _get_project(project_id)
 
@@ -881,7 +1212,7 @@ def create_app(router_instance=None, database_url=None):
             return error_response(str(exception))
 
     @app.get("/api/meetings/{meeting_id}")
-    def meeting_detail(meeting_id: int):
+    def meeting_detail(meeting_id: int, user: dict = Depends(get_current_user)):
         meeting = db.session.get(Meeting, meeting_id)
 
         if meeting is None:
@@ -899,7 +1230,11 @@ def create_app(router_instance=None, database_url=None):
         }
 
     @app.get("/api/projects/{project_id}/history")
-    def project_history(project_id: int, type: str = ""):
+    def project_history(
+        project_id: int,
+        type: str = "",
+        user: dict = Depends(get_current_user),
+    ):
         project = _get_project(project_id)
         selected_type = (type or "").strip()
 
@@ -925,7 +1260,11 @@ def create_app(router_instance=None, database_url=None):
         }
 
     @app.get("/api/projects/{project_id}/report")
-    def status_report(project_id: int, download: int = 0):
+    def status_report(
+        project_id: int,
+        download: int = 0,
+        user: dict = Depends(get_current_user),
+    ):
         project = _get_project(project_id)
         report = build_status_report(project)
 
@@ -953,7 +1292,7 @@ def create_app(router_instance=None, database_url=None):
         )
 
     @app.get("/api/projects/{project_id}/review")
-    def review_queue(project_id: int):
+    def review_queue(project_id: int, user: dict = Depends(get_current_user)):
         project = _get_project(project_id)
 
         queue = []
@@ -985,7 +1324,12 @@ def create_app(router_instance=None, database_url=None):
         }
 
     @app.post("/api/projects/{project_id}/review/{event_id}/resolve")
-    def resolve_review_event(project_id: int, event_id: int, body: ReviewResolve):
+    def resolve_review_event(
+        project_id: int,
+        event_id: int,
+        body: ReviewResolve,
+        user: dict = Depends(get_current_user),
+    ):
         project = _get_project(project_id)
 
         event = HistoryEvent.query.filter_by(
@@ -1069,7 +1413,13 @@ def create_app(router_instance=None, database_url=None):
         return {"ok": True, "action": resolution_action, "target_item_id": target_item_id}
 
     @app.post("/api/projects/{project_id}/items/{item_type}/{item_id}/resolve")
-    def manual_item_resolve(project_id: int, item_type: str, item_id: int, body: ManualResolve):
+    def manual_item_resolve(
+        project_id: int,
+        item_type: str,
+        item_id: int,
+        body: ManualResolve,
+        user: dict = Depends(get_current_user),
+    ):
         project = _get_project(project_id)
 
         action = (body.action or "resolve").strip().lower()
