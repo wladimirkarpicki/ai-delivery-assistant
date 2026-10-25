@@ -6,11 +6,13 @@ import type { Flash } from "../lib/format"
 import { useAuth } from "../lib/useAuth"
 
 /**
- * The base.html shell, ported one-to-one: the same header markup, the
- * same native <dialog> command palette fed by the project list, the
- * same theme toggle logic, the same footer. Authentication adds the
- * account chip on the right: username, role, the admin-only Users
- * link, and the sign-out button.
+ * The base.html shell, ported one-to-one: the same native <dialog>
+ * command palette fed by the project list, the same theme toggle
+ * logic, the same footer. The header keeps one hierarchy: a left nav
+ * group (brand, Projects, Dashboard, admin-only Users) of quiet
+ * links with the current route marked aria-current, and the working
+ * controls on the right - Find, the theme toggle, and the account
+ * chip with the sign-out button.
  */
 export default function AppShell() {
   const location = useLocation()
@@ -91,16 +93,43 @@ export default function AppShell() {
 
   const themeLabel = dark ? "Switch to light theme" : "Switch to dark theme"
 
+  // Only the exact "/"-routes light up as the current page; deeper
+  // paths (a project, a meeting) mark nothing, like a tab bar.
+  const isCurrent = (path: string) => location.pathname === path
+
   return (
     <>
       <header className="app-header">
         <div className="app-header__inner">
-          <Link className="brand" to="/projects">
-            AI Delivery Assistant
-          </Link>
-          <Link className="button" to="/dashboard">
-            Dashboard
-          </Link>
+          <nav className="app-header__nav" aria-label="Primary">
+            <Link className="brand" to="/projects">
+              AI Delivery Assistant
+            </Link>
+            <Link
+              className="nav-link"
+              to="/projects"
+              aria-current={isCurrent("/projects") ? "page" : undefined}
+            >
+              Projects
+            </Link>
+            <Link
+              className="nav-link"
+              to="/dashboard"
+              aria-current={isCurrent("/dashboard") ? "page" : undefined}
+            >
+              Dashboard
+            </Link>
+            {user?.role === "admin" && (
+              <Link
+                className="nav-link"
+                to="/users"
+                aria-current={isCurrent("/users") ? "page" : undefined}
+              >
+                Users
+              </Link>
+            )}
+          </nav>
+
           <button
             className="command-trigger"
             type="button"
@@ -117,16 +146,46 @@ export default function AppShell() {
             aria-label={themeLabel}
             title={themeLabel}
           >
-            {dark ? "☀" : "☾"}
+            {dark ? (
+              <svg
+                width="1.25rem"
+                height="1.25rem"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2" />
+                <path d="M12 20v2" />
+                <path d="m4.93 4.93 1.41 1.41" />
+                <path d="m17.66 17.66 1.41 1.41" />
+                <path d="M2 12h2" />
+                <path d="M20 12h2" />
+                <path d="m6.34 17.66-1.41 1.41" />
+                <path d="m19.07 4.93-1.41 1.41" />
+              </svg>
+            ) : (
+              <svg
+                width="1.25rem"
+                height="1.25rem"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+              </svg>
+            )}
           </button>
 
           <div className="app-header__account">
-            {user?.role === "admin" && (
-              <Link className="button" to="/users">
-                Users
-              </Link>
-            )}
-
             <span className="user-chip" title="Signed in">
               <span className="user-chip__name">{user?.username}</span>
               <span className={`badge badge--${user?.role ?? "user"}`}>
@@ -134,7 +193,7 @@ export default function AppShell() {
               </span>
             </span>
 
-            <button type="button" onClick={handleSignOut}>
+            <button type="button" className="nav-link" onClick={handleSignOut}>
               Sign out
             </button>
           </div>
