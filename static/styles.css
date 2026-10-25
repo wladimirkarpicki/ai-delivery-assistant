@@ -504,3 +504,100 @@ article p { margin-top: var(--space-2xs); }
   .kpi:nth-child(n+3) { border-block-start: 0; }
   .kpi + .kpi { border-inline-start: 1px solid var(--border); }
 }
+
+/* ---- Authentication ------------------------------------------------------------
+ *
+ *    The sign-in and first-time-setup pages render outside the app
+ *    shell, so they center one pane of glass on the page. Inside the
+ *    shell, the account chip rides the header and the users page
+ *    reuses the hairline-separator list recipe of the project list. */
+
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  align-content: center;
+}
+.auth-card {
+  width: min(100%, 24rem);
+  display: grid;
+  gap: var(--space-sm);
+  margin-block: var(--space-xl);
+}
+.auth-card h1 { margin: 0; }
+.auth-card p { margin: 0; color: var(--muted-foreground); }
+.auth-card form { margin: 0; }
+
+/* The signed-in account, pinned to the right edge of the header. */
+.app-header__account {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-width: 0;
+  padding: .25rem .5rem;
+  border-radius: var(--radius-input);
+  background-color: var(--field);
+  border: 1px solid var(--field-edge);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.user-chip__name {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+/* Role markers read as quiet stamps, not buttons: uppercase mono,
+ * a hairline border; the admin variant carries the brand line. */
+.badge {
+  display: inline-block;
+  padding: .0625rem .375rem;
+  border: 1px solid var(--border);
+  border-radius: .3125rem;
+  font: 600 var(--text-xs)/1.5 var(--font-mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.badge--admin { color: var(--brand); border-color: color-mix(in oklch, var(--brand) 40%, transparent); }
+
+/* The admin's account list: the same hairline separators as the
+ * project list, one row per account. */
+.user-list { list-style: none; margin: 0; padding: 0; }
+.user-list > li {
+  padding-block: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+.user-list > li:last-child { border-bottom: 0; }
+.user-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+}
+.user-row > div:first-child { min-width: 0; }
+.user-row strong { font: 600 var(--text-lg)/1.2 var(--font-display); }
+.tag-you {
+  margin-inline-start: var(--space-2xs);
+  padding: .0625rem .375rem;
+  border-radius: .3125rem;
+  border: 1px solid var(--border);
+  font: 600 var(--text-xs)/1.5 var(--font-mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.user-actions { display: inline-flex; flex-wrap: wrap; gap: var(--space-2xs); margin-inline-start: auto; }
+.user-actions button { min-height: auto; padding: .375rem .625rem; font-size: var(--text-sm); }
+.reset-form { margin-block: var(--space-sm) 0; padding-inline-start: var(--space-md); border-inline-start: 2px solid var(--border); }
+.reset-form label { margin-bottom: var(--space-sm); }

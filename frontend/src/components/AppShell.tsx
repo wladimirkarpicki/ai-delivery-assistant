@@ -1,20 +1,29 @@
 import { useEffect, useRef, useState } from "react"
-import { Link, Outlet, useLocation } from "react-router-dom"
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom"
 import { getProjects } from "../lib/api"
 import type { ProjectSummary } from "../lib/api"
 import type { Flash } from "../lib/format"
+import { useAuth } from "../lib/useAuth"
 
 /**
  * The base.html shell, ported one-to-one: the same header markup, the
  * same native <dialog> command palette fed by the project list, the
- * same theme toggle logic, the same footer. No element added, none
- * removed.
+ * same theme toggle logic, the same footer. Authentication adds the
+ * account chip on the right: username, role, the admin-only Users
+ * link, and the sign-out button.
  */
 export default function AppShell() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { user, signOut } = useAuth()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [paletteProjects, setPaletteProjects] = useState<ProjectSummary[] | null>(null)
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme === "dark")
+
+  function handleSignOut() {
+    signOut()
+    navigate("/login")
+  }
 
   // The flash messages Flask rendered at the top of <main class="container">:
   // pages pass them along when they navigate after an action.
@@ -110,6 +119,25 @@ export default function AppShell() {
           >
             {dark ? "☀" : "☾"}
           </button>
+
+          <div className="app-header__account">
+            {user?.role === "admin" && (
+              <Link className="button" to="/users">
+                Users
+              </Link>
+            )}
+
+            <span className="user-chip" title="Signed in">
+              <span className="user-chip__name">{user?.username}</span>
+              <span className={`badge badge--${user?.role ?? "user"}`}>
+                {user?.role}
+              </span>
+            </span>
+
+            <button type="button" onClick={handleSignOut}>
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
