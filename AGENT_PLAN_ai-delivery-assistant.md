@@ -1,10 +1,10 @@
 # Agent Plan — ai-delivery-assistant
-Last updated: 2026-10-24 22:31
+Last updated: 2026-10-25 09:15
 Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-10-24 13:00 (= Last updated глобала при последней сверке)
 Роль: проектный агент (ai-delivery-assistant) — работа с кодинг-сабагентами; задачи — от главного агента (Team Lead) или пользователя.
 
 ## Status
-- Active focus: 005 — аутентификация с ролями admin/user (по образцу inventory-management-system), стартует после merge 004. 004 (метрики-дашборд) выполнен и верифицирован 2026-10-24: 16 passed, build+tsc зелёные, /api/metrics 200 в Docker-стеке, скриншоты light/dark сняты; merge в main и push — в этом цикле.
+- Active focus: проект стабилен: 004 (метрики-дашборд) и 005 (auth admin/user) выполнены, верифицированы в Docker-стеке и вмержены; первый вход пользователя — через /setup (bootstrap первого админа). Следующее — по запросу пользователя.
 - Blocked: —
 - Risks: orphaned-том pgdata_ai (fs-повреждён, не удаляется) остаётся в vhdx — чистка отложена; Docker Desktop на USB D: умирает при перезагрузках машины (3-й раз: ночь 21→22.10, npipe not found) — каждый нештатный останов = риск порчи томов, перед выключением машины выходить из Docker Desktop вручную; диск C: ~3.6 ГБ free (нормализовано, было 0.6); на origin ~15 устаревших веток (не мешают).
 
@@ -15,7 +15,7 @@ Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-1
 | 002 | Cleanup stale feature branches (19 слияных) | completed | main | `git branch -l` → только main + feature/001-docker-fullstack | Чекап 2026-10-21: локально только main и feature/001; на origin осталось ~15 устаревших веток |
 | 003 | Инцидент-ревери: восстановление стека после fs-повреждения тома pgdata_ai + повторная миграция данных + скриншоты 8 страниц | completed | feature/001-docker-fullstack | `docker compose ps → 2 healthy; /api/health → 200; DB counts 7/16/59/9/9/6; 8 валидных PNG 1440x900` | compose down/up на новом томе pgdata_ai2 exit 0; pg_dump 111747 Б → psql restore exit 0; counts exact match; /api/health 200; screenshots 01-08 (169-240 КБ, Pillow-валидны) |
 | 004 | Кросс-проектный метрики-дашборд: /api/metrics + recharts (KPI, пай статусов/импактов, donut open items, бары по проектам и владельцам, area-таймлайн) + README-апдейт (Docker, pytest, mojibake) | completed | feature/004-metrics-dashboard | `pnpm --dir frontend build → exit 0; tsc → 0 errors; pytest tests/test_api.py → 16 passed; curl /api/metrics → 200` | Коммиты 37838a7 (backend + 4 теста) / 295c8b2 (recharts-фронт, useTheme+chartTheme) / f83a295 (README Docker/pytest/mojibake); Lead-верификация 2026-10-24: pytest 16 passed 4.67s, ревью api.py (агрегаты пакетные, outerjoin unknown) и DashboardPage, docker rebuild → /api/metrics 200 (totals 7/16/9/59, статусы unknown 5/at risk 1/on track 1, impacts high 4/unknown 5, owners 5 строк), /api/health 200, скриншоты 09-11 light/full/dark (Pillow mean 225/30) |
-| 005 | Аутентификация с ролями admin/user по образцу inventory-management-system: users-таблица, JWT HS256, lockout 5 неудач/15 мин, bootstrap-админ, admin-CRUD пользователей, last-admin защита, SPA login/setup/users | pending | feature/005-auth-roles | `без токена /api/projects → 401; user → 403 на /api/users; login lockout → 429; last-admin demote/delete → 400; build+tsc+pytest зелёные` | — |
+| 005 | Аутентификация с ролями admin/user по образцу inventory-management-system: users-таблица, JWT HS256, lockout 5 неудач/15 мин, bootstrap-админ, admin-CRUD пользователей, last-admin защита, SPA login/setup/users | completed | feature/005-auth-roles | `без токена /api/projects → 401; user → 403 на /api/users; login lockout → 429; last-admin demote/delete → 400; pytest → 29 passed; build+tsc → 0` | Коммиты ee90b99/7ec771b/c44bcc7/624e24e/c880c8d + e7949c9 (compose JWT_SECRET_KEY); Lead-верификация 2026-10-25: pytest 29 passed, ruff clean; docker-БД: users-DDL + alembic_version→c2f6b8d4a1e9 (psql, эквивалент миграции); стек: 14/14 curl-гейтов PASS (401 без токена, 403 user-роль, 429 lockout, 400 self-delete/last-admin, setup/login 200, метрики под токеном; JWT_SECRET_KEY 64 симв. в контейнере); throwaway-юзеры стёрты (users=0), /setup свободен; скриншоты 12-14 |
 
 ## Task details
 ### 001 — Docker full-stack build + data migration
@@ -67,6 +67,7 @@ Constraints: паттерн и UX — как inventory-management-system (JWT be
 - 2026-10-22 — Merge ветки 001 в main (merge --no-ff) выполнен после зелёных тестов (12 passed) — блокер multipart исчез сам: пакет python-multipart корректно встал в системный Python, код проекта не менялся; ветка удалена локально и на origin; проект переведён на паузу (по прямому запросу пользователя).
 - 2026-10-24 — Пауза снята прямым запросом пользователя: заказан метрики-дашборд (004). Выбран recharts@3 (React 19, SVG-чарты, темизация через useTheme-хук на data-theme); README-апдейт влит в 004 — README от 18.10 не отражал Docker-стек и pytest-команду, содержал mojibake «вЂ”».
 - 2026-10-24 — Задача 005 (auth с ролями admin/user) заказана пользователем «как в inventory-management-system»: паттерн копируется с того проекта (JWT HS256 + PyJWT, werkzeug-хэши, in-memory lockout 5/15 мин, bootstrap-setup, admin-CRUD, last-admin защита, SPA AuthProvider/RequireAuth/localStorage) с адаптацией к SQLAlchemy + Alembic вместо raw psycopg; /api/health остаётся без auth ради docker healthcheck; старт 005 — после merge 004.
+- 2026-10-25 — Деплой 005: users-миграция применена к docker-БД напрямую через psql (DDL из c2f6b8d4a1e9 + бамп alembic_version) — образ не содержит migrations/, Docker-стек управляется schema.sql на fresh-томах; JWT_SECRET_KEY проброшен в compose environment из .env (сгенерирован, не в репо) — иначе ephemeral-ключ сбрасывал бы сессии при каждом рестарте; ruff B008 ignore (FastAPI Depends в дефолтах — канон). Первый вход пользователя — /setup.
 
 ## Learnings
 - 2026-10-20 — Инфраструктура: Docker Desktop (WSL2) на внешнем накопителе D: (junction) — см. `ENVIRONMENT.md` (Infra / Machine).
@@ -92,3 +93,4 @@ Constraints: паттерн и UX — как inventory-management-system (JWT be
 - ✅ 003 — Инцидент-ревери pgdata_ai → pgdata_ai2 + повторная миграция данных + скриншоты 8 страниц (2026-10-21)
 - ✅ Merge 001 в main (12 passed, merge --no-ff, ветка удалена локально и на origin) — проект на паузе (2026-10-22)
 - ✅ 004 — Метрики-дашборд (/api/metrics + recharts: KPI, пай статусов/импактов, donut, бары, area-таймлайн, обе темы, a11y) — 16 passed, /api/metrics 200 в стеке, скриншоты light/dark (2026-10-24)
+- ✅ 005 — Auth admin/user (JWT HS256, lockout, bootstrap-setup, admin-CRUD, last-admin защита, SPA login/setup/users) — 29 passed, 14/14 curl-гейтов в Docker-стеке, скриншоты login/setup (2026-10-25)
