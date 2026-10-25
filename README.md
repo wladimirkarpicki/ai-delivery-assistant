@@ -310,10 +310,32 @@ http://127.0.0.1:8000
 
 Then:
 
-1. Create a project.
-2. Add a meeting.
-3. Upload a PDF/DOCX/TXT/Markdown file or paste meeting notes.
-4. Review the extracted project state and memory changes.
+1. On first run, create the initial admin account on the setup page (see [Authentication](#authentication)); afterwards sign in.
+2. Create a project.
+3. Add a meeting.
+4. Upload a PDF/DOCX/TXT/Markdown file or paste meeting notes.
+5. Review the extracted project state and memory changes.
+
+## Authentication
+
+Every business endpoint requires a signed-in account; sessions are stateless JWTs (HS256, PyJWT) carried as `Authorization: Bearer <token>` headers.
+
+**First-time setup.** While the `users` table is empty, `POST /api/auth/setup` (the `/setup` page in the UI) creates the initial admin account and closes itself afterwards — a second bootstrap attempt is refused with `400 Setup is already completed.` The setup page then sends the visitor to `/login` if it is ever opened again.
+
+**Roles.** Two roles exist: `admin` and `user`.
+
+- Both roles read and write the delivery workspace (projects, meetings, history, reports, review queue, metrics).
+- Only admins manage accounts: `GET/POST /api/users`, `PATCH/DELETE /api/users/{id}`, `POST /api/users/{id}/password` (403 for regular users). The admin area is the `/users` page.
+- Guardrails: you cannot delete yourself, and the last remaining admin cannot be demoted or deleted (400).
+- Everyone can change their own password via `POST /api/auth/password` (`/password` page); the current password is required.
+
+**Sessions and security.**
+
+- Tokens embed `sub`/`username`/`exp` and live `TOKEN_TTL_HOURS` (default 12). The account is re-read from the database on every request, so deleting an account revokes its tokens immediately (ghost sessions are impossible).
+- Passwords are stored as Werkzeug hashes (`generate_password_hash`/`check_password_hash`); the raw password is never stored or logged.
+- Login rate limiting: 5 failed attempts per username lock that username for 15 minutes (HTTP 429). In-memory, per process.
+- `JWT_SECRET_KEY` (from `.env` / environment) signs the tokens; set a strong random value in production (`python -c "import secrets; print(secrets.token_hex(32))"`). If it is not set, the app generates an ephemeral key at startup and logs a warning — the API keeps working (the Docker healthcheck does not depend on `.env`), but tokens reset on every restart.
+- Public endpoints without authentication: `/api/health` (the Docker healthcheck) and `/api/auth/*` (setup/login/me/password). Everything else answers `401` without a valid token; admin-only endpoints answer `403` for regular users.
 
 ## Testing
 
