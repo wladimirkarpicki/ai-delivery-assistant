@@ -628,14 +628,14 @@ article p { margin-top: var(--space-2xs); }
   font-variant-numeric: tabular-nums;
 }
 
-/* Panels start at their natural height: one panel's footer legend
-   must not stretch its row partner into a bordered void. The grid is
-   explicitly its own grid - denser than the .cards rhythm (a md gap,
-   not lg) - so five panels settle into two rows on a laptop and the
-   whole band reads in one viewport; the compact heights below follow
-   from that. */
+/* Panels in one row share their height (user request 008): the grid
+   stretches its items, each panel is a column, and the footer legend
+   pins to the bottom edge so every row reads as one even band. The
+   grid is explicitly its own grid - denser than the .cards rhythm (a
+   md gap, not lg) - so five panels settle into two rows on a laptop
+   and the whole band reads in one viewport. */
 .metrics-grid {
-  align-items: start;
+  align-items: stretch;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-md);
   margin-top: var(--space-md);
@@ -644,13 +644,27 @@ article p { margin-top: var(--space-2xs); }
   border-top: 0;
   padding-block: var(--space-sm);
   padding-inline: var(--space-md);
+  display: flex;
+  flex-direction: column;
 }
 .metrics-grid .panel > h2 { margin-bottom: var(--space-2xs); }
+.metrics-grid .panel > .chart-legend {
+  margin-top: auto;
+  padding-top: var(--space-sm);
+}
+.metrics-grid .panel > .chart-empty { margin-block: auto; }
 .chart-sub {
   margin-block: 0 var(--space-sm);
   color: var(--muted-foreground);
   font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+/* Geist runs wider than the system fallback these widths were first
+   tuned for: axis labels never wrap, they ellipsize in the tick
+   formatter instead. */
+.metrics-grid .recharts-cartesian-axis-tick text { white-space: nowrap; }
 .chart-body { height: 11rem; }
 .chart-body--wide { height: 13rem; }
 .chart-empty {
