@@ -60,14 +60,17 @@ export default function ReviewQueuePage() {
 
   return (
     <article className="record-page">
-      <Link to={`/projects/${data.project.id}`}>← {data.project.name}</Link>
-      <span className="eyebrow">Quality gate</span>
-      <h1>Review queue</h1>
-
-      <p>
-        Findings the consolidation guardrails could not apply safely.
-        Resolve each one explicitly: nothing is silently dropped.
-      </p>
+      <div className="page-heading">
+        <div>
+          <Link to={`/projects/${data.project.id}`}>← {data.project.name}</Link>
+          <span className="eyebrow">Quality gate</span>
+          <h1>Review queue</h1>
+          <p>
+            Findings the consolidation guardrails could not apply safely.
+            Resolve each one explicitly: nothing is silently dropped.
+          </p>
+        </div>
+      </div>
 
       {error && <div className="notice error">{error}</div>}
 
@@ -75,7 +78,7 @@ export default function ReviewQueuePage() {
         data.queue.map((entry) => <ReviewEntry key={entry.event.id} entry={entry} onResolve={resolve} />)
       ) : (
         <section className="panel">
-          <p>Nothing needs review. 🎉</p>
+          <p>Nothing needs review.</p>
         </section>
       )}
     </article>

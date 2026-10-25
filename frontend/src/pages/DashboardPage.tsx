@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { CSSProperties, ReactNode } from "react"
 import { Link } from "react-router-dom"
 import {
@@ -29,6 +29,11 @@ import { fmtDate, humanStatus, plural } from "../lib/format"
  * original project cards below. Both requests load in parallel; each
  * band renders as its data arrives. No chart animations, quiet axes,
  * and empty states that stay out of the way.
+ *
+ * Compact by default, expandable on demand: the grid trades chart
+ * height for a page that fits (all five panels in two rows), and each
+ * panel title opens a native <dialog> where the same chart gets 60vh
+ * and full axis labels - one render function per chart, two sizes.
  */
 
 /** Shown when /api/metrics itself fails, so the charts degrade to their empty states. */
@@ -66,37 +71,53 @@ function statusLabel(status: string): string {
   return status === "unknown" ? "Not started" : humanStatus(status)
 }
 
-/** A chart panel: heading, hint line, the chart (or its empty state), and an optional footer legend. */
-function ChartPanel(props: {
+/** Everything one chart panel knows about itself: its title, when it
+ *  is empty, its footer legend, and how to draw it - once for the
+ *  compact grid and once for the expand dialog, which is the same
+ *  chart given room for full axis labels. */
+type ChartConfig = {
+  id: string
   title: string
   hint?: string
   wide?: boolean
   bodyClass?: string
-  height?: number
   empty: string | null
   label: string
   footer?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <section className={`panel${props.wide ? " panel--wide" : ""}`}>
-      <h2>{props.title}</h2>
-      {props.hint ? <p className="chart-sub">{props.hint}</p> : null}
+  render: (inDialog: boolean) => ReactNode
+}
 
-      {props.empty === null ? (
+/** A chart panel: the title as its expand trigger, the hint line, the
+ *  chart (or its empty state), and an optional footer legend. */
+function ChartPanel(props: { config: ChartConfig; onOpen: (config: ChartConfig) => void }) {
+  const { config } = props
+  return (
+    <section className={`panel${config.wide ? " panel--wide" : ""}`}>
+      <h2>
+        <button
+          type="button"
+          className="panel-trigger"
+          aria-haspopup="dialog"
+          onClick={() => props.onOpen(config)}
+        >
+          {config.title}
+        </button>
+      </h2>
+      {config.hint ? <p className="chart-sub">{config.hint}</p> : null}
+
+      {config.empty === null ? (
         <>
           <div
-            className={`chart-body${props.bodyClass ? ` ${props.bodyClass}` : ""}`}
+            className={`chart-body${config.bodyClass ? ` ${config.bodyClass}` : ""}`}
             role="img"
-            aria-label={props.label}
-            style={props.height === undefined ? undefined : { height: `${props.height}px` }}
+            aria-label={config.label}
           >
-            {props.children}
+            {config.render(false)}
           </div>
-          {props.footer}
+          {config.footer}
         </>
       ) : (
-        <p className="chart-empty">{props.empty}</p>
+        <p className="chart-empty">{config.empty}</p>
       )}
     </section>
   )
@@ -117,6 +138,8 @@ export default function DashboardPage() {
   const t = chartTheme(theme)
   const [rows, setRows] = useState<DashboardRow[] | null>(null)
   const [metrics, setMetrics] = useState<Metrics | null>(null)
+  const chartDialogRef = useRef<HTMLDialogElement>(null)
+  const [openChart, setOpenChart] = useState<ChartConfig | null>(null)
 
   useEffect(() => {
     getDashboard()
@@ -126,6 +149,18 @@ export default function DashboardPage() {
       .then((data) => setMetrics(data))
       .catch(() => setMetrics(EMPTY_METRICS))
   }, [])
+
+  // The expanded chart renders into the dialog first, then the dialog
+  // opens - the same order the command palette fetches in.
+  useEffect(() => {
+    if (openChart) chartDialogRef.current?.showModal()
+  }, [openChart])
+
+  // Ported from the command palette: clicking the backdrop (the
+  // dialog itself) closes it; Escape is native.
+  function onChartDialogClick(event: React.MouseEvent<HTMLDialogElement>) {
+    if (event.target === chartDialogRef.current) chartDialogRef.current?.close()
+  }
 
   if (rows === null && metrics === null) return null
 
@@ -226,7 +261,6 @@ export default function DashboardPage() {
     (sum, entry) => sum + entry.open + entry.completed,
     0,
   )
-  const openWorkHeight = Math.max(220, 38 * openWork.length + 24)
 
   // Six KPIs, each one answerable at a glance.
   const activeProjects = m.status_distribution
@@ -240,6 +274,336 @@ export default function DashboardPage() {
     { label: "Open blockers", value: m.totals.open_blockers },
     { label: "Resolution rate", value: `${Math.round(m.resolution_rate * 100)}%` },
     { label: "Meetings · 30d", value: m.totals.meetings_last_30d },
+  ]
+
+  // The five charts, declared once each: the grid renders them small,
+  // the expand dialog renders the same one large (inDialog switches
+  // the axis labels from ellipsized to full).
+  const charts: ChartConfig[] = [
+    {
+      id: "status",
+      title: "Delivery status",
+      hint: "Every project by its current delivery status.",
+      empty: m.totals.projects === 0 ? "No projects yet." : null,
+      label: `Projects by delivery status: ${statusData
+        .map((entry) => `${entry.name} ${entry.value}`)
+        .join(", ")}`,
+      footer: (
+        <ul className="chart-legend">
+          {statusData.map((entry) => (
+            <li key={entry.status}>
+              <span
+                className="swatch"
+                style={{ backgroundColor: statusColorOf(entry.status) }}
+              />
+              {entry.name}: {entry.value}
+            </li>
+          ))}
+        </ul>
+      ),
+      render: () => (
+        <div className="donut">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={statusData}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                innerRadius="60%"
+                outerRadius="82%"
+                paddingAngle={2}
+                stroke="none"
+                isAnimationActive={false}
+              >
+                {statusData.map((entry) => (
+                  <Cell
+                    key={entry.status}
+                    fill={statusColorOf(entry.status)}
+                  />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={tooltipContentStyle}
+                labelStyle={tooltipLabelStyle}
+                itemStyle={tooltipItemStyle}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+          <DonutHole value={m.totals.projects} label="projects" />
+        </div>
+      ),
+    },
+    {
+      id: "risks",
+      title: "Risk profile",
+      hint: "Open risks by impact; resolution progress lives in the KPI strip.",
+      empty: m.totals.open_risks === 0 ? "No open risks." : null,
+      label: `Open risks by impact: ${openImpacts
+        .map((entry) => `${entry.label} ${entry.open}`)
+        .join(", ")}`,
+      footer: (
+        <ul className="chart-legend">
+          {openImpacts.map((entry) => (
+            <li key={entry.impact}>
+              <span
+                className="swatch"
+                style={{ backgroundColor: impactColorOf(entry.impact) }}
+              />
+              {entry.label}: {entry.open} open
+            </li>
+          ))}
+        </ul>
+      ),
+      render: () => (
+        <div className="donut">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={openImpacts}
+                dataKey="open"
+                nameKey="label"
+                cx="50%"
+                cy="50%"
+                innerRadius="60%"
+                outerRadius="82%"
+                paddingAngle={2}
+                stroke="none"
+                isAnimationActive={false}
+              >
+                {openImpacts.map((entry) => (
+                  <Cell
+                    key={entry.impact}
+                    fill={impactColorOf(entry.impact)}
+                  />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={tooltipContentStyle}
+                labelStyle={tooltipLabelStyle}
+                itemStyle={tooltipItemStyle}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+          <DonutHole value={m.totals.open_risks} label="open risks" />
+        </div>
+      ),
+    },
+    {
+      id: "open-work",
+      title: "Open work by project",
+      hint: "Open risks, blockers, and actions, top six projects.",
+      empty: (
+        m.per_project.length === 0
+          ? "No projects yet."
+          : openTotal === 0
+            ? "No open risks, blockers, or actions."
+            : null
+      ),
+      label: `Open work per project: ${openWork
+        .map(
+          (project) =>
+            `${project.name}: ${project.open_risks} risks, ${project.open_blockers} blockers, ${project.open_actions} actions`,
+        )
+        .join("; ")}`,
+      render: (inDialog) => (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={openWork}
+            layout="vertical"
+            margin={{ top: 4, right: 16, bottom: 0, left: 8 }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke={t.grid}
+              horizontal={false}
+            />
+            <XAxis
+              type="number"
+              allowDecimals={false}
+              tick={axisTick}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              type="category"
+              dataKey="name"
+              width={inDialog ? 200 : 140}
+              tick={axisTick}
+              tickFormatter={(value: string) => (inDialog ? value : ellipsize(value))}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              contentStyle={tooltipContentStyle}
+              labelStyle={tooltipLabelStyle}
+              itemStyle={tooltipItemStyle}
+              cursor={{ fill: t.grid }}
+            />
+            <Legend formatter={renderLegend} />
+            <Bar
+              dataKey="open_risks"
+              name="Risks"
+              stackId="open"
+              fill={t.kind.risks}
+              barSize={12}
+              isAnimationActive={false}
+            />
+            <Bar
+              dataKey="open_blockers"
+              name="Blockers"
+              stackId="open"
+              fill={t.kind.blockers}
+              barSize={12}
+              isAnimationActive={false}
+            />
+            <Bar
+              dataKey="open_actions"
+              name="Actions"
+              stackId="open"
+              fill={t.kind.actions}
+              barSize={12}
+              radius={[0, 4, 4, 0]}
+              isAnimationActive={false}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      ),
+    },
+    {
+      id: "owners",
+      title: "Actions by owner",
+      hint: "Open and completed action items per owner; unowned items count as unassigned.",
+      empty: ownersTotal === 0 ? "No action items yet." : null,
+      label: `Action items by owner: ${m.action_owners
+        .map(
+          (entry) =>
+            `${entry.owner}: ${entry.open} open, ${entry.completed} completed`,
+        )
+        .join("; ")}`,
+      render: (inDialog) => (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={m.action_owners}
+            margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke={t.grid}
+              vertical={false}
+            />
+            <XAxis
+              dataKey="owner"
+              tick={axisTick}
+              tickFormatter={(value: string) => (inDialog ? value : ellipsize(value, 12))}
+              axisLine={false}
+              tickLine={false}
+              interval={0}
+            />
+            <YAxis
+              allowDecimals={false}
+              tick={axisTick}
+              axisLine={false}
+              tickLine={false}
+              width={32}
+            />
+            <Tooltip
+              contentStyle={tooltipContentStyle}
+              labelStyle={tooltipLabelStyle}
+              itemStyle={tooltipItemStyle}
+              cursor={{ fill: t.grid }}
+            />
+            <Legend formatter={renderLegend} />
+            <Bar
+              dataKey="open"
+              name="Open"
+              stackId="owner"
+              fill={t.kind.actions}
+              barSize={26}
+              isAnimationActive={false}
+            />
+            <Bar
+              dataKey="completed"
+              name="Completed"
+              stackId="owner"
+              fill={t.muted}
+              barSize={26}
+              radius={[4, 4, 0, 0]}
+              isAnimationActive={false}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      ),
+    },
+    {
+      id: "activity",
+      title: "Activity",
+      hint: "Meetings analyzed and history events recorded, by month.",
+      wide: true,
+      bodyClass: "chart-body--wide",
+      empty: m.activity_timeline.length === 0 ? "No activity yet." : null,
+      label: `Monthly activity: ${m.activity_timeline
+        .map(
+          (entry) =>
+            `${entry.month}: ${entry.meetings} meetings, ${entry.events} events`,
+        )
+        .join("; ")}`,
+      render: () => (
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart
+            data={m.activity_timeline}
+            margin={{ top: 8, right: 16, bottom: 0, left: 0 }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke={t.grid}
+              vertical={false}
+            />
+            <XAxis
+              dataKey="month"
+              tick={axisTick}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              allowDecimals={false}
+              tick={axisTick}
+              axisLine={false}
+              tickLine={false}
+              width={32}
+            />
+            <Tooltip
+              contentStyle={tooltipContentStyle}
+              labelStyle={tooltipLabelStyle}
+              itemStyle={tooltipItemStyle}
+              cursor={{ stroke: t.grid, strokeDasharray: "3 3" }}
+            />
+            <Legend formatter={renderLegend} />
+            <Area
+              type="monotone"
+              dataKey="events"
+              name="History events"
+              stroke={t.categorical[1]}
+              fill={t.categorical[1]}
+              fillOpacity={0.14}
+              strokeWidth={2}
+              isAnimationActive={false}
+            />
+            <Area
+              type="monotone"
+              dataKey="meetings"
+              name="Meetings"
+              stroke={t.categorical[0]}
+              fill={t.categorical[0]}
+              fillOpacity={0.14}
+              strokeWidth={2}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      ),
+    },
   ]
 
   return (
@@ -266,325 +630,9 @@ export default function DashboardPage() {
 
       {metrics !== null && (
         <div className="cards metrics-grid">
-          <ChartPanel
-            title="Delivery status"
-            hint="Every project by its current delivery status."
-            empty={m.totals.projects === 0 ? "No projects yet." : null}
-            label={`Projects by delivery status: ${statusData
-              .map((entry) => `${entry.name} ${entry.value}`)
-              .join(", ")}`}
-            footer={
-              <ul className="chart-legend">
-                {statusData.map((entry) => (
-                  <li key={entry.status}>
-                    <span
-                      className="swatch"
-                      style={{ backgroundColor: statusColorOf(entry.status) }}
-                    />
-                    {entry.name}: {entry.value}
-                  </li>
-                ))}
-              </ul>
-            }
-          >
-            <div className="donut">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={statusData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius="60%"
-                    outerRadius="82%"
-                    paddingAngle={2}
-                    stroke="none"
-                    isAnimationActive={false}
-                  >
-                    {statusData.map((entry) => (
-                      <Cell
-                        key={entry.status}
-                        fill={statusColorOf(entry.status)}
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={tooltipContentStyle}
-                    labelStyle={tooltipLabelStyle}
-                    itemStyle={tooltipItemStyle}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-              <DonutHole value={m.totals.projects} label="projects" />
-            </div>
-          </ChartPanel>
-
-          <ChartPanel
-            title="Risk profile"
-            hint="Open risks by impact; resolution progress lives in the KPI strip."
-            empty={m.totals.open_risks === 0 ? "No open risks." : null}
-            label={`Open risks by impact: ${openImpacts
-              .map((entry) => `${entry.label} ${entry.open}`)
-              .join(", ")}`}
-            footer={
-              <ul className="chart-legend">
-                {openImpacts.map((entry) => (
-                  <li key={entry.impact}>
-                    <span
-                      className="swatch"
-                      style={{ backgroundColor: impactColorOf(entry.impact) }}
-                    />
-                    {entry.label}: {entry.open} open
-                  </li>
-                ))}
-              </ul>
-            }
-          >
-            <div className="donut">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={openImpacts}
-                    dataKey="open"
-                    nameKey="label"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius="60%"
-                    outerRadius="82%"
-                    paddingAngle={2}
-                    stroke="none"
-                    isAnimationActive={false}
-                  >
-                    {openImpacts.map((entry) => (
-                      <Cell
-                        key={entry.impact}
-                        fill={impactColorOf(entry.impact)}
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={tooltipContentStyle}
-                    labelStyle={tooltipLabelStyle}
-                    itemStyle={tooltipItemStyle}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-              <DonutHole value={m.totals.open_risks} label="open risks" />
-            </div>
-          </ChartPanel>
-
-          <ChartPanel
-            title="Open work by project"
-            hint="Open risks, blockers, and actions, top six projects."
-            empty={
-              m.per_project.length === 0
-                ? "No projects yet."
-                : openTotal === 0
-                  ? "No open risks, blockers, or actions."
-                  : null
-            }
-            label={`Open work per project: ${openWork
-              .map(
-                (project) =>
-                  `${project.name}: ${project.open_risks} risks, ${project.open_blockers} blockers, ${project.open_actions} actions`,
-              )
-              .join("; ")}`}
-            height={openWorkHeight}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={openWork}
-                layout="vertical"
-                margin={{ top: 4, right: 16, bottom: 0, left: 8 }}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke={t.grid}
-                  horizontal={false}
-                />
-                <XAxis
-                  type="number"
-                  allowDecimals={false}
-                  tick={axisTick}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  width={140}
-                  tick={axisTick}
-                  tickFormatter={(value: string) => ellipsize(value)}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                  cursor={{ fill: t.grid }}
-                />
-                <Legend formatter={renderLegend} />
-                <Bar
-                  dataKey="open_risks"
-                  name="Risks"
-                  stackId="open"
-                  fill={t.kind.risks}
-                  barSize={12}
-                  isAnimationActive={false}
-                />
-                <Bar
-                  dataKey="open_blockers"
-                  name="Blockers"
-                  stackId="open"
-                  fill={t.kind.blockers}
-                  barSize={12}
-                  isAnimationActive={false}
-                />
-                <Bar
-                  dataKey="open_actions"
-                  name="Actions"
-                  stackId="open"
-                  fill={t.kind.actions}
-                  barSize={12}
-                  radius={[0, 4, 4, 0]}
-                  isAnimationActive={false}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartPanel>
-
-          <ChartPanel
-            title="Actions by owner"
-            hint="Open and completed action items per owner; unowned items count as unassigned."
-            empty={ownersTotal === 0 ? "No action items yet." : null}
-            label={`Action items by owner: ${m.action_owners
-              .map(
-                (entry) =>
-                  `${entry.owner}: ${entry.open} open, ${entry.completed} completed`,
-              )
-              .join("; ")}`}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={m.action_owners}
-                margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke={t.grid}
-                  vertical={false}
-                />
-                <XAxis
-                  dataKey="owner"
-                  tick={axisTick}
-                  tickFormatter={(value: string) => ellipsize(value, 12)}
-                  axisLine={false}
-                  tickLine={false}
-                  interval={0}
-                />
-                <YAxis
-                  allowDecimals={false}
-                  tick={axisTick}
-                  axisLine={false}
-                  tickLine={false}
-                  width={32}
-                />
-                <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                  cursor={{ fill: t.grid }}
-                />
-                <Legend formatter={renderLegend} />
-                <Bar
-                  dataKey="open"
-                  name="Open"
-                  stackId="owner"
-                  fill={t.kind.actions}
-                  barSize={26}
-                  isAnimationActive={false}
-                />
-                <Bar
-                  dataKey="completed"
-                  name="Completed"
-                  stackId="owner"
-                  fill={t.muted}
-                  barSize={26}
-                  radius={[4, 4, 0, 0]}
-                  isAnimationActive={false}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartPanel>
-
-          <ChartPanel
-            title="Activity"
-            hint="Meetings analyzed and history events recorded, by month."
-            wide
-            bodyClass="chart-body--wide"
-            empty={m.activity_timeline.length === 0 ? "No activity yet." : null}
-            label={`Monthly activity: ${m.activity_timeline
-              .map(
-                (entry) =>
-                  `${entry.month}: ${entry.meetings} meetings, ${entry.events} events`,
-              )
-              .join("; ")}`}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={m.activity_timeline}
-                margin={{ top: 8, right: 16, bottom: 0, left: 0 }}
-              >
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke={t.grid}
-                  vertical={false}
-                />
-                <XAxis
-                  dataKey="month"
-                  tick={axisTick}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  allowDecimals={false}
-                  tick={axisTick}
-                  axisLine={false}
-                  tickLine={false}
-                  width={32}
-                />
-                <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                  cursor={{ stroke: t.grid, strokeDasharray: "3 3" }}
-                />
-                <Legend formatter={renderLegend} />
-                <Area
-                  type="monotone"
-                  dataKey="events"
-                  name="History events"
-                  stroke={t.categorical[1]}
-                  fill={t.categorical[1]}
-                  fillOpacity={0.14}
-                  strokeWidth={2}
-                  isAnimationActive={false}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="meetings"
-                  name="Meetings"
-                  stroke={t.categorical[0]}
-                  fill={t.categorical[0]}
-                  fillOpacity={0.14}
-                  strokeWidth={2}
-                  isAnimationActive={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </ChartPanel>
+          {charts.map((chart) => (
+            <ChartPanel key={chart.id} config={chart} onOpen={setOpenChart} />
+          ))}
         </div>
       )}
 
@@ -629,6 +677,40 @@ export default function DashboardPage() {
           )}
         </div>
       )}
+
+      <dialog
+        className="chart-dialog"
+        ref={chartDialogRef}
+        aria-label={openChart?.title}
+        onClick={onChartDialogClick}
+        onClose={() => setOpenChart(null)}
+      >
+        {openChart && (
+          <>
+            <h2>{openChart.title}</h2>
+            {openChart.hint ? <p className="chart-sub">{openChart.hint}</p> : null}
+
+            {openChart.empty === null ? (
+              <>
+                <div className="chart-body" role="img" aria-label={openChart.label}>
+                  {openChart.render(true)}
+                </div>
+                {openChart.footer}
+              </>
+            ) : (
+              <p className="chart-empty">{openChart.empty}</p>
+            )}
+
+            <button
+              type="button"
+              className="nav-link"
+              onClick={() => chartDialogRef.current?.close()}
+            >
+              Close
+            </button>
+          </>
+        )}
+      </dialog>
     </>
   )
 }

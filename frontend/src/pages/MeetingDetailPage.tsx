@@ -45,9 +45,13 @@ export default function MeetingDetailPage() {
 
   return (
     <article className="record-page">
-      <Link to={`/projects/${meeting.project_id}`}>← {meeting.project_name}</Link>
-      <span className="eyebrow">Meeting record</span>
-      <h1>{meeting.title}</h1>
+      <div className="page-heading">
+        <div>
+          <Link to={`/projects/${meeting.project_id}`}>← {meeting.project_name}</Link>
+          <span className="eyebrow">Meeting record</span>
+          <h1>{meeting.title}</h1>
+        </div>
+      </div>
 
       <p className="record-meta">
         {fmtDateTime(meeting.created_at)}
