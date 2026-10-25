@@ -231,6 +231,7 @@ tests/                 Application tests
 - **FastAPI** (JSON API, static assets, SPA fallback)
 - **SQLAlchemy** 2.x
 - **React 19 + TypeScript** (Vite build; no UI framework - pages render the original markup and classes)
+- **Geist / Geist Mono** - the UI typefaces, self-hosted as woff2 in `static/fonts/` (no external font CDN)
 
 - **Alembic**
 - **PostgreSQL**
