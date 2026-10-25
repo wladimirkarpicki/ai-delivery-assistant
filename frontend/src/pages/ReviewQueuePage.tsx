@@ -78,7 +78,7 @@ export default function ReviewQueuePage() {
         data.queue.map((entry) => <ReviewEntry key={entry.event.id} entry={entry} onResolve={resolve} />)
       ) : (
         <section className="panel">
-          <p>Nothing needs review. 🎉</p>
+          <p>Nothing needs review.</p>
         </section>
       )}
     </article>
