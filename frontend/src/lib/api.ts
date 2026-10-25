@@ -190,15 +190,14 @@ export interface MetricsTotals {
   open_risks: number
   open_blockers: number
   open_actions: number
+  resolved_risks: number
+  resolved_blockers: number
+  resolved_actions: number
+  meetings_last_30d: number
 }
 
 export interface StatusDistributionEntry {
   status: string
-  count: number
-}
-
-export interface OpenItemsMixEntry {
-  kind: "risks" | "blockers" | "actions"
   count: number
 }
 
@@ -231,8 +230,9 @@ export interface ActionOwnerMetrics {
 
 export interface Metrics {
   totals: MetricsTotals
+  /** Resolved share of every risk, blocker, and action ever recorded (0..1). */
+  resolution_rate: number
   status_distribution: StatusDistributionEntry[]
-  open_items_mix: OpenItemsMixEntry[]
   per_project: PerProjectMetrics[]
   risk_impacts: RiskImpactMetrics[]
   activity_timeline: ActivityTimelineEntry[]

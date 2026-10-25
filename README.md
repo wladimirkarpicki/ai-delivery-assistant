@@ -347,6 +347,25 @@ python -m pytest tests/test_api.py
 
 The repository also includes independent development/testing code for the memory consolidation layer as that feature evolves.
 
+## Demo data
+
+An idempotent seed script fills the Docker dev database with demo delivery data, so the dashboard has something meaningful to show:
+
+```powershell
+Get-Content -Raw scripts\seed_demo_data.py | docker compose exec -T app python -
+```
+
+```sh
+docker compose exec -T app python - < scripts/seed_demo_data.py
+```
+
+What it does:
+
+- Creates three `Demo ·` projects — **Customer Portal Redesign** (on track), **Data Platform Migration** (at risk), and **Mobile App Launch** (blocked) — each with 5-7 meetings spread evenly over May-October 2026, risks by impact (roughly 60% open / 40% resolved), blockers, action items with owners and due dates, decisions, and the matching creation history events.
+- Upserts a `ProjectState` (delivery status, progress summary, completed/in-progress items) for the five smoke-test projects: *OpenRouter Smoke Test* and *Pre-Match Smoke Test* → delivered, *Duplicate Scenarios Test* and *C4 Semantic Test* → on track, *Test Project* → at risk.
+- Re-running is safe: previously seeded `Demo ·` rows are deleted first (history events → items → states → meetings → projects) and then recreated; the smoke-test projects keep their existing rows and only get a refreshed state.
+- Real projects (e.g. `inventory-management-system`, `ai-delivery-assistant`) are never touched.
+
 ## Design principles
 
 The project intentionally separates three responsibilities:

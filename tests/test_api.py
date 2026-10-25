@@ -7,7 +7,7 @@ an in-memory sqlite database keeps every test isolated.
 import json
 import os
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
 from fastapi.testclient import TestClient
@@ -447,7 +447,7 @@ class ApiTests(unittest.TestCase):
     # ------------------------------------------------------------------
     # Metrics
 
-    def test_metrics_totals_mix_status_and_per_project(self):
+    def test_metrics_totals_status_and_per_project(self):
         project_id = self.create_project()
         self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
         self.assertEqual(self.add_meeting(project_id, "Weekly 1", "QA risk discussed").status_code, 201)
@@ -462,13 +462,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["totals"]["open_risks"], 1)
         self.assertEqual(body["totals"]["open_blockers"], 0)
         self.assertEqual(body["totals"]["open_actions"], 1)
+        self.assertEqual(body["totals"]["resolved_risks"], 0)
+        self.assertEqual(body["totals"]["resolved_blockers"], 0)
+        self.assertEqual(body["totals"]["resolved_actions"], 0)
+        # The meeting was recorded now, so it sits inside the window.
+        self.assertEqual(body["totals"]["meetings_last_30d"], 1)
         self.assertGreaterEqual(body["totals"]["history_events"], 3)
 
-        # The mix mirrors the open totals, one entry per kind.
-        self.assertEqual(
-            {entry["kind"]: entry["count"] for entry in body["open_items_mix"]},
-            {"risks": 1, "blockers": 0, "actions": 1},
-        )
+        # Two open items, nothing resolved yet: the rate is 0.
+        self.assertEqual(body["resolution_rate"], 0.0)
 
         # The only project has an analyzed state: "at_risk" -> "at risk".
         self.assertEqual(body["status_distribution"], [{"status": "at risk", "count": 1}])
@@ -576,10 +578,15 @@ class ApiTests(unittest.TestCase):
 
         body = self.client.get("/api/metrics").json()
 
-        self.assertEqual(
-            {entry["kind"]: entry["count"] for entry in body["open_items_mix"]},
-            {"risks": 2, "blockers": 1, "actions": 2},
-        )
+        self.assertEqual(body["totals"]["open_risks"], 2)
+        self.assertEqual(body["totals"]["resolved_risks"], 1)
+        self.assertEqual(body["totals"]["open_blockers"], 1)
+        self.assertEqual(body["totals"]["resolved_blockers"], 0)
+        self.assertEqual(body["totals"]["open_actions"], 2)
+        self.assertEqual(body["totals"]["resolved_actions"], 1)
+
+        # Resolved (one risk + one action) of seven recorded items.
+        self.assertAlmostEqual(body["resolution_rate"], 2 / 7)
 
         impacts = {entry["impact"]: entry for entry in body["risk_impacts"]}
         self.assertEqual(
@@ -608,6 +615,59 @@ class ApiTests(unittest.TestCase):
             ],
         )
 
+    def test_metrics_resolution_rate_and_meetings_last_30d(self):
+        # Direct fixtures with wall-clock-relative created_at values, so
+        # the 30-day window and the resolution rate have exact answers.
+        project_id = self.create_project("Tempo")
+
+        fresh = Meeting(
+            project_id=project_id,
+            title="Standup",
+            original_text="text",
+            analysis_text="analysis",
+            analysis_json={},
+            provider="openrouter",
+            model="openrouter/free",
+            created_at=datetime.now(UTC),
+        )
+        old = Meeting(
+            project_id=project_id,
+            title="Retro",
+            original_text="text two",
+            analysis_text="analysis",
+            analysis_json={},
+            provider="openrouter",
+            model="openrouter/free",
+            created_at=datetime.now(UTC) - timedelta(days=40),
+        )
+        db.session.add_all([fresh, old])
+        db.session.flush()
+
+        db.session.add_all([
+            Risk(project_id=project_id, title="R open", status="open",
+                 created_in_meeting_id=fresh.id, updated_in_meeting_id=fresh.id),
+            Risk(project_id=project_id, title="R resolved", status="resolved",
+                 created_in_meeting_id=old.id, updated_in_meeting_id=fresh.id),
+            ActionItem(project_id=project_id, title="A completed", status="completed",
+                       created_in_meeting_id=old.id, updated_in_meeting_id=fresh.id),
+            ActionItem(project_id=project_id, title="A open", status="open",
+                       created_in_meeting_id=fresh.id, updated_in_meeting_id=fresh.id),
+        ])
+        db.session.commit()
+
+        body = self.client.get("/api/metrics").json()
+
+        # Only the fresh meeting is inside the trailing 30-day window.
+        self.assertEqual(body["totals"]["meetings"], 2)
+        self.assertEqual(body["totals"]["meetings_last_30d"], 1)
+
+        # Two resolved (risk + action) of four recorded items -> 0.5.
+        self.assertEqual(body["totals"]["resolved_risks"], 1)
+        self.assertEqual(body["totals"]["resolved_actions"], 1)
+        self.assertEqual(body["totals"]["open_risks"], 1)
+        self.assertEqual(body["totals"]["open_actions"], 1)
+        self.assertEqual(body["resolution_rate"], 0.5)
+
     def test_metrics_on_empty_database(self):
         body = self.client.get("/api/metrics").json()
 
@@ -621,16 +681,15 @@ class ApiTests(unittest.TestCase):
                 "open_risks": 0,
                 "open_blockers": 0,
                 "open_actions": 0,
+                "resolved_risks": 0,
+                "resolved_blockers": 0,
+                "resolved_actions": 0,
+                "meetings_last_30d": 0,
             },
         )
-        self.assertEqual(
-            body["open_items_mix"],
-            [
-                {"kind": "risks", "count": 0},
-                {"kind": "blockers", "count": 0},
-                {"kind": "actions", "count": 0},
-            ],
-        )
+        # Nothing recorded means nothing outstanding: the rate reads as
+        # fully resolved rather than null.
+        self.assertEqual(body["resolution_rate"], 1.0)
         self.assertEqual(body["status_distribution"], [])
         self.assertEqual(body["per_project"], [])
         self.assertEqual(body["risk_impacts"], [])
