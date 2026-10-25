@@ -36,9 +36,13 @@ export default function HistoryPage() {
 
   return (
     <article className="record-page">
-      <Link to={`/projects/${data.project.id}`}>← {data.project.name}</Link>
-      <span className="eyebrow">Evidence trail</span>
-      <h1>Project history</h1>
+      <div className="page-heading">
+        <div>
+          <Link to={`/projects/${data.project.id}`}>← {data.project.name}</Link>
+          <span className="eyebrow">Evidence trail</span>
+          <h1>Project history</h1>
+        </div>
+      </div>
 
       <nav className="subnav" aria-label="History filters">
         <Link
