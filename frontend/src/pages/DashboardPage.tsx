@@ -62,7 +62,7 @@ const EMPTY_METRICS: Metrics = {
 /** The impacts the risk-profile donut shows, worst first. */
 const IMPACT_ORDER = ["high", "medium", "low"] as const
 
-function ellipsize(value: string, max = 18): string {
+function ellipsize(value: string, max = 14): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value
 }
 
@@ -283,7 +283,7 @@ export default function DashboardPage() {
     {
       id: "status",
       title: "Delivery status",
-      hint: "Every project by its current delivery status.",
+      hint: "Portfolio by delivery status.",
       empty: m.totals.projects === 0 ? "No projects yet." : null,
       label: `Projects by delivery status: ${statusData
         .map((entry) => `${entry.name} ${entry.value}`)
@@ -338,7 +338,7 @@ export default function DashboardPage() {
     {
       id: "risks",
       title: "Risk profile",
-      hint: "Open risks by impact; resolution progress lives in the KPI strip.",
+      hint: "Open risks by impact.",
       empty: m.totals.open_risks === 0 ? "No open risks." : null,
       label: `Open risks by impact: ${openImpacts
         .map((entry) => `${entry.label} ${entry.open}`)
@@ -393,7 +393,7 @@ export default function DashboardPage() {
     {
       id: "open-work",
       title: "Open work by project",
-      hint: "Open risks, blockers, and actions, top six projects.",
+      hint: "Top six projects by open work.",
       empty: (
         m.per_project.length === 0
           ? "No projects yet."
@@ -429,7 +429,7 @@ export default function DashboardPage() {
             <YAxis
               type="category"
               dataKey="name"
-              width={inDialog ? 200 : 140}
+              width={inDialog ? 200 : 150}
               tick={axisTick}
               tickFormatter={(value: string) => (inDialog ? value : ellipsize(value))}
               axisLine={false}
@@ -474,7 +474,7 @@ export default function DashboardPage() {
     {
       id: "owners",
       title: "Actions by owner",
-      hint: "Open and completed action items per owner; unowned items count as unassigned.",
+      hint: "Open and completed actions per owner.",
       empty: ownersTotal === 0 ? "No action items yet." : null,
       label: `Action items by owner: ${m.action_owners
         .map(
@@ -539,7 +539,7 @@ export default function DashboardPage() {
     {
       id: "activity",
       title: "Activity",
-      hint: "Meetings analyzed and history events recorded, by month.",
+      hint: "Meetings and events by month.",
       wide: true,
       bodyClass: "chart-body--wide",
       empty: m.activity_timeline.length === 0 ? "No activity yet." : null,
