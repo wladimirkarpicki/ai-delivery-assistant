@@ -8,7 +8,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Legend,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -72,23 +71,21 @@ function statusLabel(status: string): string {
 }
 
 /** Everything one chart panel knows about itself: its title, when it
- *  is empty, its footer legend, and how to draw it - once for the
- *  compact grid and once for the expand dialog, which is the same
- *  chart given room for full axis labels. */
+ *  is empty, and how to draw it - once for the compact grid and once
+ *  for the expand dialog, which is the same chart given room for
+ *  full labels. */
 type ChartConfig = {
   id: string
   title: string
-  hint?: string
   wide?: boolean
   bodyClass?: string
   empty: string | null
   label: string
-  footer?: ReactNode
   render: (inDialog: boolean) => ReactNode
 }
 
-/** A chart panel: the title as its expand trigger, the hint line, the
- *  chart (or its empty state), and an optional footer legend. */
+/** A chart panel: the title as its expand trigger, and the chart (or
+ *  its empty state). Project and series names live in the tooltip. */
 function ChartPanel(props: { config: ChartConfig; onOpen: (config: ChartConfig) => void }) {
   const { config } = props
   return (
@@ -103,19 +100,15 @@ function ChartPanel(props: { config: ChartConfig; onOpen: (config: ChartConfig) 
           {config.title}
         </button>
       </h2>
-      {config.hint ? <p className="chart-sub">{config.hint}</p> : null}
 
       {config.empty === null ? (
-        <>
-          <div
-            className={`chart-body${config.bodyClass ? ` ${config.bodyClass}` : ""}`}
-            role="img"
-            aria-label={config.label}
-          >
-            {config.render(false)}
-          </div>
-          {config.footer}
-        </>
+        <div
+          className={`chart-body${config.bodyClass ? ` ${config.bodyClass}` : ""}`}
+          role="img"
+          aria-label={config.label}
+        >
+          {config.render(false)}
+        </div>
       ) : (
         <p className="chart-empty">{config.empty}</p>
       )}
@@ -177,9 +170,6 @@ export default function DashboardPage() {
   }
   const tooltipLabelStyle = { color: t.tooltip.text, fontWeight: 600 }
   const tooltipItemStyle = { color: t.tooltip.text }
-  const renderLegend = (value: unknown) => (
-    <span style={{ color: t.axis, fontSize: "0.75rem" }}>{String(value)}</span>
-  )
 
   const statusColorOf = (status: string): string => {
     switch (status.replace(/\s+/g, "_")) {
@@ -283,24 +273,10 @@ export default function DashboardPage() {
     {
       id: "status",
       title: "Delivery status",
-      hint: "Portfolio by delivery status.",
       empty: m.totals.projects === 0 ? "No projects yet." : null,
       label: `Projects by delivery status: ${statusData
         .map((entry) => `${entry.name} ${entry.value}`)
         .join(", ")}`,
-      footer: (
-        <ul className="chart-legend">
-          {statusData.map((entry) => (
-            <li key={entry.status}>
-              <span
-                className="swatch"
-                style={{ backgroundColor: statusColorOf(entry.status) }}
-              />
-              {entry.name}: {entry.value}
-            </li>
-          ))}
-        </ul>
-      ),
       render: () => (
         <div className="donut">
           <ResponsiveContainer width="100%" height="100%">
@@ -338,24 +314,10 @@ export default function DashboardPage() {
     {
       id: "risks",
       title: "Risk profile",
-      hint: "Open risks by impact.",
       empty: m.totals.open_risks === 0 ? "No open risks." : null,
       label: `Open risks by impact: ${openImpacts
         .map((entry) => `${entry.label} ${entry.open}`)
         .join(", ")}`,
-      footer: (
-        <ul className="chart-legend">
-          {openImpacts.map((entry) => (
-            <li key={entry.impact}>
-              <span
-                className="swatch"
-                style={{ backgroundColor: impactColorOf(entry.impact) }}
-              />
-              {entry.label}: {entry.open} open
-            </li>
-          ))}
-        </ul>
-      ),
       render: () => (
         <div className="donut">
           <ResponsiveContainer width="100%" height="100%">
@@ -392,8 +354,7 @@ export default function DashboardPage() {
     },
     {
       id: "open-work",
-      title: "Open work by project",
-      hint: "Top six projects by open work.",
+      title: "Open work",
       empty: (
         m.per_project.length === 0
           ? "No projects yet."
@@ -407,7 +368,7 @@ export default function DashboardPage() {
             `${project.name}: ${project.open_risks} risks, ${project.open_blockers} blockers, ${project.open_actions} actions`,
         )
         .join("; ")}`,
-      render: (inDialog) => (
+      render: () => (
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={openWork}
@@ -426,28 +387,17 @@ export default function DashboardPage() {
               axisLine={false}
               tickLine={false}
             />
-            <YAxis
-              type="category"
-              dataKey="name"
-              width={inDialog ? 200 : 150}
-              tick={axisTick}
-              tickFormatter={(value: string) => (inDialog ? value : ellipsize(value))}
-              axisLine={false}
-              tickLine={false}
-            />
             <Tooltip
               contentStyle={tooltipContentStyle}
               labelStyle={tooltipLabelStyle}
               itemStyle={tooltipItemStyle}
               cursor={{ fill: t.grid }}
             />
-            <Legend formatter={renderLegend} />
             <Bar
               dataKey="open_risks"
               name="Risks"
               stackId="open"
               fill={t.kind.risks}
-              barSize={12}
               isAnimationActive={false}
             />
             <Bar
@@ -455,7 +405,6 @@ export default function DashboardPage() {
               name="Blockers"
               stackId="open"
               fill={t.kind.blockers}
-              barSize={12}
               isAnimationActive={false}
             />
             <Bar
@@ -463,7 +412,6 @@ export default function DashboardPage() {
               name="Actions"
               stackId="open"
               fill={t.kind.actions}
-              barSize={12}
               radius={[0, 4, 4, 0]}
               isAnimationActive={false}
             />
@@ -474,7 +422,6 @@ export default function DashboardPage() {
     {
       id: "owners",
       title: "Actions by owner",
-      hint: "Open and completed actions per owner.",
       empty: ownersTotal === 0 ? "No action items yet." : null,
       label: `Action items by owner: ${m.action_owners
         .map(
@@ -514,7 +461,6 @@ export default function DashboardPage() {
               itemStyle={tooltipItemStyle}
               cursor={{ fill: t.grid }}
             />
-            <Legend formatter={renderLegend} />
             <Bar
               dataKey="open"
               name="Open"
@@ -539,7 +485,6 @@ export default function DashboardPage() {
     {
       id: "activity",
       title: "Activity",
-      hint: "Meetings and events by month.",
       wide: true,
       bodyClass: "chart-body--wide",
       empty: m.activity_timeline.length === 0 ? "No activity yet." : null,
@@ -579,7 +524,6 @@ export default function DashboardPage() {
               itemStyle={tooltipItemStyle}
               cursor={{ stroke: t.grid, strokeDasharray: "3 3" }}
             />
-            <Legend formatter={renderLegend} />
             <Area
               type="monotone"
               dataKey="events"
@@ -687,15 +631,11 @@ export default function DashboardPage() {
         {openChart && (
           <>
             <h2>{openChart.title}</h2>
-            {openChart.hint ? <p className="chart-sub">{openChart.hint}</p> : null}
 
             {openChart.empty === null ? (
-              <>
-                <div className="chart-body" role="img" aria-label={openChart.label}>
-                  {openChart.render(true)}
-                </div>
-                {openChart.footer}
-              </>
+              <div className="chart-body" role="img" aria-label={openChart.label}>
+                {openChart.render(true)}
+              </div>
             ) : (
               <p className="chart-empty">{openChart.empty}</p>
             )}
