@@ -193,7 +193,7 @@ export default function AppShell() {
               </span>
             </span>
 
-            <button type="button" className="nav-link" onClick={handleSignOut}>
+            <button type="button" className="button--ghost" onClick={handleSignOut}>
               Sign out
             </button>
           </div>
