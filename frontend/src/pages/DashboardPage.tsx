@@ -589,13 +589,7 @@ export default function DashboardPage() {
 
   return (
     <>
-      <div className="page-heading page-heading--compact">
-        <div>
-          <Link to="/projects">← Projects</Link>
-          <span className="eyebrow">Cross-project view</span>
-          <h1>Dashboard</h1>
-        </div>
-      </div>
+      <h1 className="visually-hidden">Dashboard</h1>
 
       {metrics !== null && (
         <div className="kpi-strip" aria-label="Cross-project totals">
