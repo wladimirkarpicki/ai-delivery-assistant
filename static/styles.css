@@ -627,6 +627,8 @@ article p { margin-top: var(--space-2xs); }
   padding: var(--space-xs) var(--space-md);
   display: grid;
   gap: var(--space-3xs);
+  justify-items: center;
+  text-align: center;
 }
 .kpi:nth-child(even) { border-inline-start: 1px solid var(--border); }
 .kpi:nth-child(n+3) { border-block-start: 1px solid var(--border); }
@@ -642,12 +644,12 @@ article p { margin-top: var(--space-2xs); }
   font-variant-numeric: tabular-nums;
 }
 
-/* Panels in one row share their height (user request 008): the grid
-   stretches its items, each panel is a column, and the footer legend
-   pins to the bottom edge so every row reads as one even band. The
-   grid is explicitly its own grid - denser than the .cards rhythm (a
-   md gap, not lg) - so five panels settle into two rows on a laptop
-   and the whole band reads in one viewport. */
+/* Panels in one row share their height: the grid stretches its
+   items, each panel is a column, and the chart body grows to fill
+   it, so every row reads as one even band with no empty glass. The
+   grid is explicitly its own grid - denser than the .cards rhythm -
+   so five panels settle into two rows on a laptop and the whole
+   band reads in one viewport. */
 .metrics-grid {
   align-items: stretch;
   grid-template-columns: minmax(0, 1fr);
@@ -661,26 +663,19 @@ article p { margin-top: var(--space-2xs); }
   display: flex;
   flex-direction: column;
 }
-.metrics-grid .panel > h2 { margin-bottom: var(--space-2xs); }
-.metrics-grid .panel > .chart-legend {
-  margin-top: auto;
-  padding-top: var(--space-sm);
-}
+.metrics-grid .panel > h2 { margin-bottom: var(--space-2xs); font-size: var(--text-md); font-weight: 600; }
 .metrics-grid .panel > .chart-empty { margin-block: auto; }
-.chart-sub {
-  margin-block: 0 var(--space-sm);
-  color: var(--muted-foreground);
-  font-size: var(--text-sm);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 /* Geist runs wider than the system fallback these widths were first
    tuned for: axis labels never wrap, they ellipsize in the tick
    formatter instead. */
 .metrics-grid .recharts-cartesian-axis-tick text { white-space: nowrap; }
 .chart-body { height: 10rem; }
 .chart-body--wide { height: 11.5rem; }
+/* With hints and footer legends gone, the chart body is the panel's
+   only flexible child: it grows to fill the stretched panel, so no
+   panel shows empty glass below its chart. */
+.metrics-grid .panel > .chart-body { flex: 1; height: auto; min-height: 10rem; }
+.metrics-grid .panel > .chart-body--wide { min-height: 11.5rem; }
 .chart-empty {
   margin-block: var(--space-lg);
   color: var(--muted-foreground);
