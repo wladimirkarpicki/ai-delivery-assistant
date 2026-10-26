@@ -1,5 +1,5 @@
 # Agent Plan — ai-delivery-assistant
-Last updated: 2026-10-26 15:45
+Last updated: 2026-10-26 17:10
 Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-10-25 20:33 (= Last updated глобала при последней сверке)
 Роль: проектный агент (ai-delivery-assistant) — работа с кодинг-сабагентами; задачи — от главного агента (Team Lead) или пользователя.
 
@@ -23,6 +23,7 @@ Process: глобальный AGENTS.md — $DSH_HOME/AGENTS.md | Synced: 2026-1
 | 010 | Дашборд-итерация (фидбек на деплой 009): KPI по центру; сабтайтлы убраны со всех графиков; легенды убраны (пайчарты + open-work + owners/activity); «Open work by project» → «Open work»; имена проектов — только в tooltip при наведении; бары без barSize (заполняют высоту); заголовки панелей text-md; chart-body flex:1 — нет пустого стекла | completed | feature/010-dashboard-refine | `build+tsc → 0; pytest → 30; скриншоты light/dark — без хинтов/легенд, KPI центрирован, бары заполняют панель` | Коммит 4e1e40f (Lead directly — визуально-итеративная работа «правка→скриншот→смотреть»); бандл 717→702 КБ; деплой + скриншоты 20-21 (обновлены); тёмная тема верифицирована (mean 29.8) |
 | 011 | Дашборд по референсам (фидбек на 010 + ресёрч PatternFly/Perforce/Colorlib): фикс «2 проекта» — скрытая category-ось (hide вместо удаления — без неё recharts не раскладывает бары); ВСЕ проекты с open work (slice(0,6) убран); донат-карты по паттерну utilization-card: донат слева + компактные статы справа (заполняет прямоугольник, читается без ховера); сабтайтлы возвращены гармонично (одна строка, muted, ellipsis) | completed | feature/011-dashboard-reference | `build+tsc → 0; pytest → 30; в Open work все проекты с открытыми работами; донаты занимают весь прямоугольник; сабтайтлы на месте` | Коммит 96cd235; при деплое: containerd read-only в VM (хвост USB-инцидента) — вылечен чистым wsl --shutdown-рестартом без пересоздания дистрибутива; скриншоты 20-21 (light mean 224, dark mean 31) |
 | 012 | Хедер и чистота дашборда (фидбек): видимый заголовок «Dashboard» убран (h1 → visually-hidden, семантика цела; −46px); навигация = underline-вкладки (текст + брендовый underline на активном роуте по нижней кромке хедера), действия = стеклянные кнопки (.button--ghost для Sign out в семействе с Find/темой) — вкладки и кнопки больше не читаются как одно | completed | feature/012-header-tabs | `build+tsc → 0; pytest → 30; вкладка активного роута с underline, hover без заливки; Sign out = glass-chip; на дашборде нет видимого заголовка` | Коммит bea1496; деплой + скриншоты 20-21 (обновлены, light 224 / dark 31); паттерн — Material/PatternFly tab-vs-action (поисковый движок шумел, ресёрч на каноне + предыдущие ссылки) |
+| 013 | Рутинная: скриншоты дашборда (light/dark, актуальная пара 22/23) в репо: docs/dashboard-*.png + секция Screenshots в README (side-by-side, 49%) | completed | feature/013-readme-screenshots → merged 9bd5a34 | `30 passed; оба PNG в git; README рендерит секцию` | Коммиты 2768c4c + merge 9bd5a34; 201/101 КБ; screenshots/ остаётся gitignored (рабочие артефакты), кураторская пара — в docs/ |
 
 ## Task details
 ### 001 — Docker full-stack build + data migration
@@ -129,3 +130,4 @@ Constraints: дизайн-система Solid Glass (tokens.css) — не вв�
 - ✅ 010 — Дашборд-итерация: KPI по центру, без сабтайтлов/легенд, «Open work» с hover-именами, бары заполняют панели (4e1e40f) — 30 passed, скриншоты light/dark (2026-10-26)
 - ✅ 011 — Дашборд по референсам: скрытая оса чинит «2 проекта», все проекты в Open work, донат-карты со статами сбоку, сабтайтлы вернулись (96cd235) — 30 passed (2026-10-26)
 - ✅ 012 — Заголовок дашборда в visually-hidden; хедер: underline-вкладки vs стеклянные действия (bea1496) — 30 passed (2026-10-26)
+- ✅ 013 — Скриншоты дашборда в README (docs/, обе темы, side-by-side) — 9bd5a34 (2026-10-26)
