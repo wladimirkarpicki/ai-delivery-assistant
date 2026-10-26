@@ -193,13 +193,21 @@ pre {
 .app-header__inner { min-height: 4.25rem; display: flex; align-items: center; gap: var(--space-md); }
 
 /* The left nav group carries the auto margin that used to sit on the
-   brand: it holds the left edge, everything after it rides right. */
+   brand: it holds the left edge, everything after it rides right.
+   The group stretches to the header's full height so the tab
+   underline meets the header's bottom hairline. */
 .app-header__nav {
   display: flex;
-  align-items: center;
-  gap: var(--space-xs);
+  align-items: stretch;
+  align-self: stretch;
+  gap: var(--space-2xs);
   margin-right: auto;
   min-width: 0;
+}
+
+.app-header__nav .brand {
+  align-self: center;
+  margin-inline-end: var(--space-sm);
 }
 
 .brand {
@@ -305,19 +313,20 @@ pre {
 .page-heading > div { min-width: 0; display: grid; gap: var(--space-xs); }
 .page-heading p { max-width: 62ch; color: var(--muted-foreground); }
 
-/* The dashboard runs its heading on one baseline row (user request):
-   the whole metric band fits a laptop viewport, so the section
-   heading sheds its display size and its lead paragraph, and the
-   page container opens with less air above it. */
-.page-heading--compact { padding-bottom: var(--space-sm); }
-.page-heading--compact > div {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
+/* The dashboard carries no visible heading: the metric band is the
+   page, and a screen-reader-only h1 keeps the outline intact. The
+   page container opens with less air above the KPI strip. */
+.container:has(.kpi-strip) { padding-block-start: var(--space-sm); }
+.visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
-.page-heading--compact h1 { font-size: var(--text-xl); }
-.container:has(.page-heading--compact) { padding-block-start: var(--space-sm); }
 
 /* Standalone panels and forms keep the divider style: a hairline over
    a section of the page, not a pane. */
@@ -419,41 +428,77 @@ pre {
 .icon-button { width: 2.75rem; padding: 0; font-size: var(--text-xl); }
 kbd { margin-left: var(--space-xs); color: var(--muted-foreground); font: 500 var(--text-xs)/1 var(--font-mono); }
 
-/* ---- Header navigation: quiet links, one current page ---------------------
+/* ---- Header tabs ------------------------------------------------------------
 
-   Nav actions are not primary actions: Projects, Dashboard, Users,
-   and Sign out wear no pane of their own, just quiet type. The
-   current route wears the one state - the same small pane of glass
-   as a chosen subnav tab. */
+   Navigation is where you are, not what you do. Tabs are quiet text
+   anchored to the header's bottom edge; the current route carries
+   the underline. Actions on the right (Find, theme, Sign out) stay
+   glass controls, so the two never read as the same kind of thing. */
 
 .nav-link {
   display: inline-flex;
   align-items: center;
-  min-height: 2.75rem;
   padding: 0 var(--space-sm);
   border: 0;
-  border-radius: var(--radius-input);
   background-color: transparent;
   color: var(--muted-foreground);
   font: 500 var(--text-sm)/1 var(--font-body);
   text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
+  position: relative;
+  box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  box-shadow: none;
 }
 @media (hover: hover) and (pointer: fine) {
-  .nav-link:not(:disabled):hover { background-color: var(--hover); color: var(--foreground); }
+  .nav-link:not(:disabled):hover { color: var(--foreground); background-color: transparent; }
 }
 .nav-link:active { box-shadow: none; }
 .nav-link[aria-current="page"] {
   color: var(--foreground);
-  background-color: var(--glass-state);
-  box-shadow:
-    inset 0 1px 0 var(--glass-state-rim),
-    0 0 0 1px var(--glass-state-edge);
+  font-weight: 600;
+  background-color: transparent;
+  box-shadow: none;
 }
+.nav-link[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  inset-inline: var(--space-sm);
+  bottom: 0;
+  block-size: 2px;
+  background-color: var(--brand);
+  border-radius: 1px;
+}
+
+/* ---- Header actions ------------------------------------------------------------
+
+   Actions wear glass: the same small pane of clear glass as the
+   command trigger, one recipe for every "do something" control in
+   the header. */
+
+.button--ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.25rem;
+  padding: 0 var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-input);
+  background-color: var(--glass-control);
+  color: var(--foreground);
+  font: 500 var(--text-sm)/1 var(--font-body);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-rim),
+    0 0 0 1px var(--glass-edge);
+}
+@media (hover: hover) and (pointer: fine) {
+  .button--ghost:not(:disabled):hover { background-color: var(--hover); }
+}
+.button--ghost:active { box-shadow: 0 0 0 1px var(--glass-edge); }
 
 /* ---- The one state: subnav tabs and palette rows ------------------------------
 
