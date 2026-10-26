@@ -665,15 +665,56 @@ article p { margin-top: var(--space-2xs); }
 }
 .metrics-grid .panel > h2 { margin-bottom: var(--space-2xs); font-size: var(--text-md); font-weight: 600; }
 .metrics-grid .panel > .chart-empty { margin-block: auto; }
+/* The one-line hint under a panel title: muted, clipped to one row. */
+.chart-sub {
+  margin-block: 0 var(--space-2xs);
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Donut cards use the whole rectangle (PatternFly utilization-card
+   pattern): the ring on the left, its numbers beside it, readable
+   without a hover. */
+.donut-row { display: flex; height: 100%; align-items: center; gap: var(--space-md); }
+.donut-row > .donut { flex: 1 1 58%; height: 100%; }
+.stat-list {
+  flex: 1 1 42%;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2xs);
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+.stat-list li { display: flex; align-items: center; gap: var(--space-3xs); min-width: 0; }
+.stat-list .swatch {
+  inline-size: .625rem;
+  block-size: .625rem;
+  border-radius: .1875rem;
+  flex: none;
+}
+.stat-list__name {
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stat-list__value {
+  margin-left: auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 /* Geist runs wider than the system fallback these widths were first
    tuned for: axis labels never wrap, they ellipsize in the tick
    formatter instead. */
 .metrics-grid .recharts-cartesian-axis-tick text { white-space: nowrap; }
 .chart-body { height: 10rem; }
 .chart-body--wide { height: 11.5rem; }
-/* With hints and footer legends gone, the chart body is the panel's
-   only flexible child: it grows to fill the stretched panel, so no
-   panel shows empty glass below its chart. */
+/* The chart body is the panel's flexible child: it grows to fill the
+   stretched panel, so no panel shows empty glass below its chart. */
 .metrics-grid .panel > .chart-body { flex: 1; height: auto; min-height: 10rem; }
 .metrics-grid .panel > .chart-body--wide { min-height: 11.5rem; }
 .chart-empty {
