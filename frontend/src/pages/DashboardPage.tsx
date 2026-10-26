@@ -77,6 +77,7 @@ function statusLabel(status: string): string {
 type ChartConfig = {
   id: string
   title: string
+  hint?: string
   wide?: boolean
   bodyClass?: string
   empty: string | null
@@ -84,8 +85,8 @@ type ChartConfig = {
   render: (inDialog: boolean) => ReactNode
 }
 
-/** A chart panel: the title as its expand trigger, and the chart (or
- *  its empty state). Project and series names live in the tooltip. */
+/** A chart panel: the title as its expand trigger, the one-line hint,
+ *  and the chart (or its empty state). Names live in the tooltip. */
 function ChartPanel(props: { config: ChartConfig; onOpen: (config: ChartConfig) => void }) {
   const { config } = props
   return (
@@ -100,6 +101,7 @@ function ChartPanel(props: { config: ChartConfig; onOpen: (config: ChartConfig) 
           {config.title}
         </button>
       </h2>
+      {config.hint ? <p className="chart-sub">{config.hint}</p> : null}
 
       {config.empty === null ? (
         <div
@@ -232,7 +234,7 @@ export default function DashboardPage() {
 
   const openImpacts = impactData.filter((entry) => entry.open > 0)
 
-  // Top six projects by currently open work.
+  // Every project with currently open work, worst first.
   const openWork = m.per_project
     .map((project) => ({
       name: project.name,
@@ -243,7 +245,6 @@ export default function DashboardPage() {
     }))
     .filter((project) => project.open_total > 0)
     .sort((a, b) => b.open_total - a.open_total)
-    .slice(0, 6)
 
   const openTotal =
     m.totals.open_risks + m.totals.open_blockers + m.totals.open_actions
@@ -273,88 +274,119 @@ export default function DashboardPage() {
     {
       id: "status",
       title: "Delivery status",
+      hint: "Portfolio by delivery status.",
       empty: m.totals.projects === 0 ? "No projects yet." : null,
       label: `Projects by delivery status: ${statusData
         .map((entry) => `${entry.name} ${entry.value}`)
         .join(", ")}`,
       render: () => (
-        <div className="donut">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={statusData}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                innerRadius="60%"
-                outerRadius="82%"
-                paddingAngle={2}
-                stroke="none"
-                isAnimationActive={false}
-              >
-                {statusData.map((entry) => (
-                  <Cell
-                    key={entry.status}
-                    fill={statusColorOf(entry.status)}
-                  />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={tooltipContentStyle}
-                labelStyle={tooltipLabelStyle}
-                itemStyle={tooltipItemStyle}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-          <DonutHole value={m.totals.projects} label="projects" />
+        <div className="donut-row">
+          <div className="donut">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={statusData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius="60%"
+                  outerRadius="82%"
+                  paddingAngle={2}
+                  stroke="none"
+                  isAnimationActive={false}
+                >
+                  {statusData.map((entry) => (
+                    <Cell
+                      key={entry.status}
+                      fill={statusColorOf(entry.status)}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <DonutHole value={m.totals.projects} label="projects" />
+          </div>
+          <ul className="stat-list">
+            {statusData.map((entry) => (
+              <li key={entry.status}>
+                <span
+                  className="swatch"
+                  style={{ backgroundColor: statusColorOf(entry.status) }}
+                />
+                <span className="stat-list__name">{entry.name}</span>
+                <span className="stat-list__value">{entry.value}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       ),
     },
     {
       id: "risks",
       title: "Risk profile",
+      hint: "Open risks by impact.",
       empty: m.totals.open_risks === 0 ? "No open risks." : null,
       label: `Open risks by impact: ${openImpacts
         .map((entry) => `${entry.label} ${entry.open}`)
         .join(", ")}`,
       render: () => (
-        <div className="donut">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={openImpacts}
-                dataKey="open"
-                nameKey="label"
-                cx="50%"
-                cy="50%"
-                innerRadius="60%"
-                outerRadius="82%"
-                paddingAngle={2}
-                stroke="none"
-                isAnimationActive={false}
-              >
-                {openImpacts.map((entry) => (
-                  <Cell
-                    key={entry.impact}
-                    fill={impactColorOf(entry.impact)}
-                  />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={tooltipContentStyle}
-                labelStyle={tooltipLabelStyle}
-                itemStyle={tooltipItemStyle}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-          <DonutHole value={m.totals.open_risks} label="open risks" />
+        <div className="donut-row">
+          <div className="donut">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={openImpacts}
+                  dataKey="open"
+                  nameKey="label"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius="60%"
+                  outerRadius="82%"
+                  paddingAngle={2}
+                  stroke="none"
+                  isAnimationActive={false}
+                >
+                  {openImpacts.map((entry) => (
+                    <Cell
+                      key={entry.impact}
+                      fill={impactColorOf(entry.impact)}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <DonutHole value={m.totals.open_risks} label="open risks" />
+          </div>
+          <ul className="stat-list">
+            {openImpacts.map((entry) => (
+              <li key={entry.impact}>
+                <span
+                  className="swatch"
+                  style={{ backgroundColor: impactColorOf(entry.impact) }}
+                />
+                <span className="stat-list__name">{entry.label}</span>
+                <span className="stat-list__value">{entry.open}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       ),
     },
     {
       id: "open-work",
       title: "Open work",
+      hint: "Open risks, blockers, and actions by project.",
       empty: (
         m.per_project.length === 0
           ? "No projects yet."
@@ -387,6 +419,9 @@ export default function DashboardPage() {
               axisLine={false}
               tickLine={false}
             />
+            {/* Hidden but present: the category axis still drives the
+                row layout; names come from the tooltip on hover. */}
+            <YAxis type="category" dataKey="name" hide />
             <Tooltip
               contentStyle={tooltipContentStyle}
               labelStyle={tooltipLabelStyle}
@@ -422,6 +457,7 @@ export default function DashboardPage() {
     {
       id: "owners",
       title: "Actions by owner",
+      hint: "Open and completed actions per owner.",
       empty: ownersTotal === 0 ? "No action items yet." : null,
       label: `Action items by owner: ${m.action_owners
         .map(
@@ -485,6 +521,7 @@ export default function DashboardPage() {
     {
       id: "activity",
       title: "Activity",
+      hint: "Meetings and events by month.",
       wide: true,
       bodyClass: "chart-body--wide",
       empty: m.activity_timeline.length === 0 ? "No activity yet." : null,
@@ -631,6 +668,7 @@ export default function DashboardPage() {
         {openChart && (
           <>
             <h2>{openChart.title}</h2>
+            {openChart.hint ? <p className="chart-sub">{openChart.hint}</p> : null}
 
             {openChart.empty === null ? (
               <div className="chart-body" role="img" aria-label={openChart.label}>
