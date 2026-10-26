@@ -6,6 +6,15 @@ The application turns meeting notes into structured project intelligence — inc
 
 The project is designed around a practical delivery-management problem: **the same project information can be described differently by different AI runs or models, so extracted information needs to be reconciled before it becomes current project state.**
 
+## Screenshots
+
+The cross-project dashboard, in both themes:
+
+<p align="center">
+  <img src="docs/dashboard-light.png" width="49%" alt="The metrics dashboard in the light theme">
+  <img src="docs/dashboard-dark.png" width="49%" alt="The metrics dashboard in the dark theme">
+</p>
+
 ## Features
 
 - AI analysis of project meeting notes
