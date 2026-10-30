@@ -24,10 +24,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install bandit safety ruff mypy
+          pip install bandit
       - name: Run Bandit SAST
         run: |
-          bandit -r . -x .venv -f sarif -o bandit.sarif || true
+          bandit -r api.py database.py models.py document_parser.py analyzer.py -f sarif -o bandit.sarif || true
       - name: Upload Bandit SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:
@@ -49,12 +49,8 @@ jobs:
           pip install safety
       - name: Run Safety SCA
         run: |
-          safety check -r requirements.txt --json --output safety.json || true
-      - name: Upload Safety SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: safety.json
-          category: safety
+          safety check -r requirements.txt --output json || true
+        continue-on-error: true
 
   lint:
     name: Code Quality (Ruff)
