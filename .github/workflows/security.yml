@@ -1,4 +1,4 @@
-﻿name: Security Scan
+name: Security Scan
 on:
   push:
     branches: [main]
@@ -25,13 +25,8 @@ jobs:
           pip install bandit
       - name: Run Bandit SAST
         run: |
-          python -m bandit -r api.py database.py models.py document_parser.py analyzer.py -f sarif -o "${{ github.workspace }}/bandit.sarif" || true
-        continue-on-error: true
-      - name: Upload Bandit SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: ${{ github.workspace }}/bandit.sarif
-          category: bandit
+          python -m bandit -r api.py database.py models.py document_parser.py analyzer.py -f txt
+        continue-on-error: false
   sca:
     name: Dependency Scan (Safety)
     runs-on: ubuntu-latest
