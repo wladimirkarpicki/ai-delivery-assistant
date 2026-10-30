@@ -1,5 +1,7 @@
 # AI Delivery Assistant
 
+![Security Scan](https://github.com/wladimirkarpicki/ai-delivery-assistant/actions/workflows/security.yml/badge.svg)
+
 AI-powered meeting-notes analyzer for project and delivery management.
 
 The application turns meeting notes into structured project intelligence — including delivery status, risks, blockers, decisions, and action items — and maintains a persistent project memory across meetings.
