@@ -29,6 +29,9 @@ from models import (
 # The JWT signing key only has to exist and stay constant for the
 # process; it is read once per create_app() call below.
 os.environ.setdefault("JWT_SECRET_KEY", "unit-test-secret-key-0123456789abcdef")
+# /api/auth/setup is gated by a one-time bootstrap token, so the suite
+# fixes a known value instead of the per-process ephemeral one.
+os.environ.setdefault("BOOTSTRAP_TOKEN", "unit-test-bootstrap-token-0123456789abcdef")
 
 
 class FakeRouter:
@@ -66,6 +69,7 @@ class ApiTests(unittest.TestCase):
     ADMIN_PASSWORD = "admin-pass-123"
     REGULAR_USERNAME = "regular"
     REGULAR_PASSWORD = "regular-pass-123"
+    BOOTSTRAP_TOKEN = os.environ["BOOTSTRAP_TOKEN"]
 
     def setUp(self):
         # In-process login rate limiting must not leak between tests.
@@ -706,7 +710,11 @@ class ApiTests(unittest.TestCase):
 
         first = self.client.post(
             "/api/auth/setup",
-            json={"username": "founder", "password": "founder-pass-123"},
+            json={
+                "username": "founder",
+                "password": "founder-pass-123",
+                "bootstrap_token": self.BOOTSTRAP_TOKEN,
+            },
         )
         self.assertEqual(first.status_code, 200, first.text)
         body = first.json()
@@ -716,7 +724,11 @@ class ApiTests(unittest.TestCase):
         # A second bootstrap is refused while any user exists.
         second = self.client.post(
             "/api/auth/setup",
-            json={"username": "other", "password": "other-pass-123"},
+            json={
+                "username": "other",
+                "password": "other-pass-123",
+                "bootstrap_token": self.BOOTSTRAP_TOKEN,
+            },
         )
         self.assertEqual(second.status_code, 400)
         self.assertIn("already completed", second.json()["detail"])
@@ -727,10 +739,39 @@ class ApiTests(unittest.TestCase):
 
         response = self.client.post(
             "/api/auth/setup",
-            json={"username": "founder", "password": "short"},
+            json={
+                "username": "founder",
+                "password": "short",
+                "bootstrap_token": self.BOOTSTRAP_TOKEN,
+            },
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("at least 8 characters", response.json()["detail"])
+
+    def test_setup_rejects_missing_or_wrong_bootstrap_token(self):
+        db.session.query(User).delete()
+        db.session.commit()
+
+        # Missing token: the caller is not allowed in at all.
+        missing = self.client.post(
+            "/api/auth/setup",
+            json={"username": "founder", "password": "founder-pass-123"},
+        )
+        self.assertEqual(missing.status_code, 403)
+        self.assertIn("Bootstrap token", missing.json()["detail"])
+
+        # Wrong token: same refusal, and no account is created by either.
+        wrong = self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "founder",
+                "password": "founder-pass-123",
+                "bootstrap_token": "not-the-real-token",
+            },
+        )
+        self.assertEqual(wrong.status_code, 403)
+        self.assertIn("Bootstrap token", wrong.json()["detail"])
+        self.assertEqual(db.session.query(User).count(), 0)
 
     def test_login_ok_wrong_password_and_unknown_user(self):
         wrong = self.client.post(

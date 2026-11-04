@@ -1,9 +1,10 @@
 """
 FastAPI application: the JSON API behind the React frontend.
 
-Every route from the Flask layer is ported with the same semantics:
-the same consolidation pipeline, the same guardrails, the same
-idempotency rules. HTML rendering moved to the React frontend; flash
+Every route from the original Flask-era layer is ported with the same
+semantics (the stack is FastAPI + plain SQLAlchemy 2.x; Flask is not a
+dependency): the same consolidation pipeline, the same guardrails, the
+same idempotency rules. HTML rendering moved to the React frontend; flash
 messages became structured JSON responses:
 
 - validation failures -> 400 {"error": "..."}
@@ -11,13 +12,14 @@ messages became structured JSON responses:
 - manual resolve warnings (idempotent no-ops) -> 200 {"level": "warning", ...}
 - consolidation fallback -> 201 with a "warning" field
 
-The factory mirrors the Flask one: create_app(router_instance=None,
+The factory mirrors the original one: create_app(router_instance=None,
 database_url=None), so the test suite drives a FakeRouter against an
 in-memory database exactly as before.
 """
 
 import io
 import logging
+import os
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
@@ -30,11 +32,20 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+# Imported directly rather than through the db namespace: the staticmethod
+# re-export loses select()'s overloads, so mypy then reads a multi-column
+# select as a single-argument call.
+from sqlalchemy import func, select
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from analyzer import analyze_document, parse_analysis
 from config import DEFAULT_MODEL, DEFAULT_PROVIDER, EMBEDDING_MODEL
-from config_loader import get_jwt_secret_key, get_token_ttl_hours
+from config_loader import (
+    get_bootstrap_token,
+    get_jwt_secret_key,
+    get_token_ttl_hours,
+)
 from database import (
     close_request_scope,
     configure_database,
@@ -103,7 +114,10 @@ class CredentialsIn(BaseModel):
 
 
 class SetupIn(CredentialsIn):
-    pass
+    # The one-time token that gates bootstrap. POST /api/auth/setup has
+    # no authenticated caller to check, so this is what keeps an
+    # unauthenticated request from creating the admin account.
+    bootstrap_token: str = ""
 
 
 class UserCreateIn(BaseModel):
@@ -131,6 +145,15 @@ LOGIN_LOCKOUT_SECONDS = 15 * 60
 
 # In-process login rate limiting: username -> (failures, first failure ts).
 _failed_logins: dict = {}
+
+
+def _is_production() -> bool:
+    """
+    True when the process runs in production mode, where a missing or
+    predictable JWT_SECRET_KEY must stop startup instead of silently
+    degrading security.
+    """
+    return (os.environ.get("AIDA_ENV") or "").strip().lower() == "production"
 
 
 def _register_failed_login(username: str) -> None:
@@ -547,6 +570,13 @@ def create_app(router_instance=None, database_url=None):
         # The Docker healthcheck must not depend on .env: an
         # ephemeral key keeps the API serving; only tokens reset
         # on every restart.
+        if _is_production():
+            raise RuntimeError(
+                "JWT_SECRET_KEY is not set and AIDA_ENV is production. "
+                "Refusing to start: an ephemeral key would silently "
+                "invalidate every token on restart, and a predictable "
+                "one would let anyone mint an admin session."
+            )
         secret_key = secrets.token_hex(32)
         logging.getLogger("ai-delivery-assistant.auth").warning(
             "JWT_SECRET_KEY is not set; generated an ephemeral key. "
@@ -594,8 +624,18 @@ def create_app(router_instance=None, database_url=None):
     @app.post("/api/auth/setup")
     def auth_setup(data: SetupIn) -> dict:
         """
-        Create the initial admin. Only available while no user exists.
+        Create the initial admin. Only available while no user exists,
+        and only to a caller who knows the one-time bootstrap token.
         """
+
+        # compare_digest needs bytes; a non-ASCII payload must not raise.
+        if not secrets.compare_digest(
+            data.bootstrap_token.encode("utf-8"),
+            get_bootstrap_token().encode("utf-8"),
+        ):
+            raise HTTPException(
+                status_code=403, detail="Bootstrap token is missing or incorrect."
+            )
 
         if User.query.count() > 0:
             raise HTTPException(status_code=400, detail="Setup is already completed.")
@@ -836,9 +876,11 @@ def create_app(router_instance=None, database_url=None):
                 "open_actions": ActionItem.query.filter_by(project_id=project.id, status="open").count(),
                 "meeting_count": Meeting.query.filter_by(project_id=project.id).count(),
                 "last_meeting": _dt(
-                    db.session.query(db.func.max(Meeting.created_at))
-                    .filter_by(project_id=project.id)
-                    .scalar()
+                    db.session.scalar(
+                        select(func.max(Meeting.created_at)).where(
+                            Meeting.project_id == project.id
+                        )
+                    )
                 ),
             })
 
@@ -902,12 +944,13 @@ def create_app(router_instance=None, database_url=None):
         # replace("_", " ") the dashboard rows use.
         status_counts: dict[str, int] = {}
 
-        for status, count in (
-            db.session.query(ProjectState.delivery_status, db.func.count(Project.id))
+        for status, count in db.session.execute(
+            select(
+                ProjectState.delivery_status, func.count(Project.id)
+            )
             .outerjoin(ProjectState, ProjectState.project_id == Project.id)
             .group_by(ProjectState.delivery_status)
-            .all()
-        ):
+        ).all():
             key = (status or "unknown").replace("_", " ")
             status_counts[key] = status_counts.get(key, 0) + int(count)
 
@@ -919,14 +962,16 @@ def create_app(router_instance=None, database_url=None):
         ]
 
         def counts_by_project(model, status=None):
-            query = db.session.query(model.project_id, db.func.count(model.id))
+            query = select(model.project_id, func.count(model.id))
 
             if status is not None:
-                query = query.filter(model.status == status)
+                query = query.where(model.status == status)
 
             return {
                 project_id: int(count)
-                for project_id, count in query.group_by(model.project_id).all()
+                for project_id, count in db.session.execute(
+                    query.group_by(model.project_id)
+                ).all()
             }
 
         meeting_counts = counts_by_project(Meeting)
@@ -951,11 +996,11 @@ def create_app(router_instance=None, database_url=None):
         # counts. Statuses outside open/resolved are not counted.
         impact_counts: dict[str, dict[str, int]] = {}
 
-        for impact, status, count in (
-            db.session.query(Risk.impact, Risk.status, db.func.count(Risk.id))
-            .group_by(Risk.impact, Risk.status)
-            .all()
-        ):
+        for impact, status, count in db.session.execute(
+            select(Risk.impact, Risk.status, func.count(Risk.id)).group_by(
+                Risk.impact, Risk.status
+            )
+        ).all():
             bucket = impact_counts.setdefault(
                 impact or "unknown", {"open": 0, "resolved": 0}
             )
@@ -1000,13 +1045,11 @@ def create_app(router_instance=None, database_url=None):
         # Action items by owner; a missing owner reads as "unassigned".
         owner_counts: dict[str, dict[str, int]] = {}
 
-        for owner, status, count in (
-            db.session.query(
-                ActionItem.owner, ActionItem.status, db.func.count(ActionItem.id)
-            )
-            .group_by(ActionItem.owner, ActionItem.status)
-            .all()
-        ):
+        for owner, status, count in db.session.execute(
+            select(
+                ActionItem.owner, ActionItem.status, func.count(ActionItem.id)
+            ).group_by(ActionItem.owner, ActionItem.status)
+        ).all():
             bucket = owner_counts.setdefault(
                 owner or "unassigned", {"open": 0, "completed": 0}
             )
@@ -1264,11 +1307,13 @@ def create_app(router_instance=None, database_url=None):
         selected_type = (type or "").strip()
 
         type_counts: dict[str, int] = {}
-        results = db.session.query(
-            HistoryEvent.event_type, db.func.count(HistoryEvent.id)
-        ).filter_by(project_id=project.id).group_by(HistoryEvent.event_type).all()  # type: ignore[misc]
-        for event_type, count in results:  # type: ignore[attr-defined]
-            type_counts[str(event_type)] = int(count)  # type: ignore[attr-defined]
+        results = db.session.execute(
+            select(HistoryEvent.event_type, func.count(HistoryEvent.id))
+            .where(HistoryEvent.project_id == project.id)
+            .group_by(HistoryEvent.event_type)
+        ).all()
+        for event_type, count in results:
+            type_counts[str(event_type)] = int(count)
 
         query = HistoryEvent.query.filter_by(project_id=project.id)
 
@@ -1467,7 +1512,7 @@ def create_app(router_instance=None, database_url=None):
             raise HTTPException(status_code=404, detail="Item not found")
 
         latest_meeting_id = db.session.scalar(
-            db.select(Meeting.id)
+            select(Meeting.id)
             .filter_by(project_id=project.id)
             .order_by(Meeting.created_at.desc())
             .limit(1)

@@ -1,6 +1,15 @@
 # Compose for ai-delivery-assistant — analogous to inventory-management-system
 # Run: docker compose up -d
 # Monitor: docker compose --profile monitoring up -d
+#
+# Required environment variables (put them in .env, which is gitignored):
+#   DATABASE_USER, DATABASE_PASSWORD, DATABASE_NAME
+#   JWT_SECRET_KEY   (python -c "import secrets; print(secrets.token_hex(32))")
+#   OPENROUTER_API_KEY
+#   BOOTSTRAP_TOKEN  (one-time token gating POST /api/auth/setup)
+#   GRAFANA_ADMIN_PASSWORD  (only with --profile monitoring)
+# Copy .env.example to .env and fill them in. There are no default values for
+# any of these: the stack refuses to start rather than run with known creds.
 
 services:
   db:
@@ -14,9 +23,9 @@ services:
           cpus: '0.5'
           memory: 512M
     environment:
-      POSTGRES_USER: ${DATABASE_USER:-postgres}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres}
-      POSTGRES_DB: ${DATABASE_NAME:-ai-delivery-assistant}
+      POSTGRES_USER: ${DATABASE_USER:?DATABASE_USER is required - copy .env.example to .env}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required - copy .env.example to .env}
+      POSTGRES_DB: ${DATABASE_NAME:?DATABASE_NAME is required - copy .env.example to .env}
     volumes:
       # pgdata_ai2: fresh volume; the old pgdata_ai got filesystem corruption
       # (EBADMSG on base/16384/24680-24681) after unclean Docker Desktop
@@ -25,7 +34,7 @@ services:
       - pgdata_ai2:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres} -d ${DATABASE_NAME:-ai-delivery-assistant}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:?required} -d ${DATABASE_NAME:?required}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -39,14 +48,18 @@ services:
     build: .
     environment:
       DATABASE_HOST: db
-      DATABASE_NAME: ${DATABASE_NAME:-ai-delivery-assistant}
-      DATABASE_USER: ${DATABASE_USER:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
-      DATABASE_URL: postgresql+psycopg://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD:-postgres}@${DATABASE_HOST:-db}:5432/${DATABASE_NAME:-ai-delivery-assistant}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      DATABASE_NAME: ${DATABASE_NAME:?required}
+      DATABASE_USER: ${DATABASE_USER:?required}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?required}
+      DATABASE_URL: postgresql+psycopg://${DATABASE_USER:?required}:${DATABASE_PASSWORD:?required}@${DATABASE_HOST:-db}:5432/${DATABASE_NAME:?required}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY is required - copy .env.example to .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required - copy .env.example to .env}
+      BOOTSTRAP_TOKEN: ${BOOTSTRAP_TOKEN:-}
+      AIDA_ENV: ${AIDA_ENV:-production}
+    # Loopback only: POST /api/auth/setup creates the first admin, so the
+    # port must not be reachable from outside this machine.
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -97,10 +110,11 @@ services:
     restart: unless-stopped
     networks:
       - backend
+    # Loopback only: no credentials default to admin/admin any more.
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required with --profile monitoring}
     volumes:
       - grafdata_ai:/var/lib/grafana
       - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro

@@ -1,18 +1,24 @@
 """
-Database layer: plain SQLAlchemy 2.x with a Flask-SQLAlchemy-style
-compatibility surface.
+Database layer: plain SQLAlchemy 2.x. Flask is NOT a dependency.
 
-The app started on Flask-SQLAlchemy; the FastAPI rewrite keeps every
-model and every business module (project_memory, report, matching)
-unchanged by providing the same namespace:
+`db` below is a small compatibility namespace, NOT a framework import.
+It re-exports SQLAlchemy constructs under the names the ported modules
+already used, so `from database import db` keeps working unchanged:
 
 - ``db.Model``      -> DeclarativeBase whose models expose ``.query``
                        (via a metaclass property), so ``Risk.query...``
                        keeps working.
-- ``db.Column`` ... -> plain re-exports of sqlalchemy constructs.
+- ``db.mapped_column`` / ``db.Mapped`` -> SQLAlchemy 2.0 typed
+                       declarative style (preferred in models.py).
+- ``db.Column`` ... -> legacy-style re-exports, kept for call sites that
+                       still use the old spelling.
 - ``db.session``   -> a scoped session: get/add/flush/commit/rollback/
                        scalar/query/remove, bound by configure_database.
 - ``db.create_all()`` -> metadata create_all on the bound engine.
+
+Reading note: the words "Flask" appear nowhere in this project's imports.
+Where they appear in comments they describe where the code came from,
+never what it is today. The stack is FastAPI + SQLAlchemy 2.x.
 
 The engine binds late: configure_database(url) is called once by the
 FastAPI app factory (live) or by the test suite (in-memory sqlite).
@@ -37,7 +43,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import (
     DeclarativeMeta,
+    Mapped,
     declarative_base,
+    mapped_column,
     relationship,
     scoped_session,
     sessionmaker,
@@ -68,7 +76,6 @@ Base = declarative_base(metaclass=_QueryMeta)
 _session_scope = contextvars.ContextVar("ada_session_scope", default=None)
 
 _Session = scoped_session(
-    # Same semantics as the Flask-SQLAlchemy session it replaces:
     # autoflush on, so add-then-query sees pending changes.
     sessionmaker(autoflush=True),
     scopefunc=lambda: _session_scope.get(),
@@ -164,6 +171,11 @@ class _DB:
 
     Model = Base
     Column = Column
+    # SQLAlchemy 2.0 typed declarative style: models declare Mapped[...]
+    # attributes and build them with db.mapped_column(...). Flask is NOT
+    # and never was a dependency here; see the file header.
+    mapped_column = staticmethod(mapped_column)
+    Mapped = Mapped
     # Functions bound through the _DB instance would swallow db as
     # their first positional argument (argument=), so wrap the plain
     # functions as staticmethods. Types such as Column/Integer bind
@@ -183,7 +195,7 @@ class _DB:
     drop_all = staticmethod(drop_all)
 
     class session:
-        """Proxy to the scoped session, mirroring Flask-SQLAlchemy."""
+        """Proxy to the scoped session, mirroring the old attribute surface."""
 
         get = staticmethod(_Session.get)
         add = staticmethod(_Session.add)

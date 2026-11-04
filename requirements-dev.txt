@@ -1,0 +1,27 @@
+# Development and CI dependencies only.
+#
+# requirements.txt stays production-only. Install this file alongside it
+# for local development and for CI jobs that run tests, typing, linting
+# and security scans.
+#
+# Same version style as requirements.txt: exact == pins, no ranges.
+# Every pin below matches what is actually installed in this workspace,
+# measured with: python -m pip list --format=freeze
+# Refresh a pin with: pip install -U <package>, then re-freeze.
+
+# Test runner and coverage reporting
+pytest==9.1.1
+pytest-cov==7.1.0
+
+# Lint
+ruff==0.17.1
+
+# Static typing
+mypy==2.4.0
+
+# Security scanning (SAST and SCA)
+bandit==1.9.4
+safety==3.8.1
+
+# Repository history maintenance (rewrites, large-file removal)
+git-filter-repo==2.47.0

@@ -261,7 +261,7 @@ python -m venv venv
 venv\Scripts\Activate.ps1
 ```
 
-Install dependencies (including dev: `black`, `ruff`, `pytest`, `coverage`, ``):
+Install dependencies (including dev: `black`, `ruff`, `pytest`, `coverage`):
 
 ```powershell
 pip install -r requirements.txt
@@ -273,9 +273,16 @@ Create `.env` file (loaded centrally via `config_loader.py`):
 
 ```text
 OPENROUTER_API_KEY=your_openrouter_api_key
-DATABASE_URL=postgresql+psycopg://user:password@localhost/ai-delivery-assistant
 
+# PostgreSQL connection, split into parts (same form as .env.example).
+# Inside the Docker network the host is the db service.
+DATABASE_HOST=localhost
+DATABASE_NAME=ai-delivery-assistant
+DATABASE_USER=postgres
+DATABASE_PASSWORD=postgres
 ```
+
+`database.py` and `migrations/env.py` read `DATABASE_URL`, not the four parts above. Docker Compose derives `DATABASE_URL` from those variables (see compose.yml); for a local run without Docker, set the assembled URL yourself, for example `postgresql+psycopg://postgres:postgres@localhost/ai-delivery-assistant`.
 
 Do not commit `.env` or API keys.
 

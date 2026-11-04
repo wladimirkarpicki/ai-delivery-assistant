@@ -6,6 +6,10 @@
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
+-- VERSION MISMATCH: this dump was produced by pg_dump 18.4, while production
+-- and the Docker stack run PostgreSQL 16 (postgres:16, see compose.yml). No
+-- database server was available here to re-dump it, so it still needs to be
+-- regenerated on PostgreSQL 16 before it is treated as the schema source.
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;

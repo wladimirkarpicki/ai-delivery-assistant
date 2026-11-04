@@ -19,5 +19,16 @@ Thumbs.db
 .archify/
 .hallmark/
 
-# Local screenshots (не для репозитория)
+# Local screenshots (not for the repository)
 screenshots/
+
+# Security scan and test artifacts
+bandit.sarif
+safety.json
+*.sarif
+.coverage
+coverage.xml
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
