@@ -193,9 +193,12 @@ def _apply_risks(project, meeting, risks):
                 "mitigation": risk.mitigation,
             }
 
-            risk.description = _value(item, "description")
-            risk.impact = _value(item, "impact", "unknown")
-            risk.mitigation = _value(item, "mitigation")
+            # A field the finding does not mention keeps its current
+            # value: _value defaults to "" (or "unknown"), which would
+            # silently erase stored detail that was never updated.
+            risk.description = _value(item, "description", risk.description)
+            risk.impact = _value(item, "impact", risk.impact)
+            risk.mitigation = _value(item, "mitigation", risk.mitigation)
             risk.updated_in_meeting_id = meeting.id
 
             if is_resolved:
@@ -267,7 +270,7 @@ def _apply_blockers(project, meeting, blockers):
                 "status": blocker.status,
             }
 
-            blocker.description = _value(item, "description")
+            blocker.description = _value(item, "description", blocker.description)
             blocker.updated_in_meeting_id = meeting.id
 
             if resolved:
@@ -305,12 +308,18 @@ def _apply_actions(project, meeting, actions):
         action_item = _find_by_canonical_title(ActionItem, project.id, title)
         completed = _value(item, "status", "open") == "completed"
 
-        due_date = _value(item, "due_date", None)
+        # A finding that gives no due date must not clear the stored one:
+        # parsing falls back to the current value, never to None.
+        due_date_source = _value(item, "due_date", None)
 
         try:
-            due_date = date.fromisoformat(due_date) if due_date else None
+            due_date = (
+                date.fromisoformat(due_date_source)
+                if due_date_source
+                else action_item.due_date if action_item else None
+            )
         except (ValueError, TypeError):
-            due_date = None
+            due_date = action_item.due_date if action_item else None
 
         if action_item is None:
             action_item = ActionItem(
@@ -352,8 +361,8 @@ def _apply_actions(project, meeting, actions):
                 ),
             }
 
-            action_item.details = _value(item, "details")
-            action_item.owner = _value(item, "owner", None)
+            action_item.details = _value(item, "details", action_item.details)
+            action_item.owner = _value(item, "owner", action_item.owner)
             action_item.due_date = due_date
             action_item.updated_in_meeting_id = meeting.id
 
@@ -622,14 +631,19 @@ def _apply_consolidation_item(
                         "status": existing.status,
                     }
 
+                    # A field the plan does not mention must keep its
+                    # current value: _value defaults to "", which would
+                    # silently erase meeting data that was never updated.
                     existing.details = _value(
                         new_item,
                         "details",
+                        existing.details,
                     )
 
                     existing.owner = _value(
                         new_item,
                         "owner",
+                        existing.owner,
                     )
 
                     existing.status = _value(
@@ -670,6 +684,7 @@ def _apply_consolidation_item(
                     existing.description = _value(
                         new_item,
                         "description",
+                        existing.description,
                     )
 
                     existing.impact = _value(
@@ -681,6 +696,7 @@ def _apply_consolidation_item(
                     existing.mitigation = _value(
                         new_item,
                         "mitigation",
+                        existing.mitigation,
                     )
 
                     existing.status = _value(
@@ -705,6 +721,7 @@ def _apply_consolidation_item(
                     existing.description = _value(
                         new_item,
                         "description",
+                        existing.description,
                     )
 
                     existing.status = _value(
@@ -1219,10 +1236,14 @@ def apply_meeting_analysis(
         analysis.get("action_items"),
     )
 
+    # A null section must behave like an absent one. The sibling loops
+    # above use "or []"; this one did not, so an explicit
+    # "decisions": null reached iteration as None and raised TypeError,
+    # which api.py's except tuple does not catch.
     for item in analysis.get(
         "decisions",
         [],
-    ):
+    ) or []:
         title = _value(item, "title")
 
         if title:

@@ -65,8 +65,20 @@ def similarity(tokens_a, tokens_b):
 
 
 def cosine_similarity(vector_a, vector_b):
-    """Cosine similarity between two embedding vectors, 0.0 to 1.0."""
+    """
+    Cosine similarity between two embedding vectors, 0.0 to 1.0.
+
+    Vectors of different length are not comparable. zipping would quietly
+    truncate the dot product to the shorter length while the norms still
+    span the full vectors, which yields a number that is neither a cosine
+    nor a similarity. Return 0.0 (no evidence of similarity) instead of
+    inventing one.
+    """
+
     if not vector_a or not vector_b:
+        return 0.0
+
+    if len(vector_a) != len(vector_b):
         return 0.0
 
     dot = sum(a * b for a, b in zip(vector_a, vector_b))

@@ -1,7 +1,29 @@
+"""
+Text extraction for uploaded meeting notes.
+
+Security posture, because the input is a user-supplied file:
+
+- the size guard measures the *uploaded* (compressed) stream, so it is a
+  floor, not a ceiling: a .docx is a ZIP archive and can inflate far
+  beyond its compressed size. MAX_EXTRACTED_CHARS caps the inflated
+  result instead, which is what actually bounds memory.
+- a .docx that is not really a ZIP (wrong content under a .docx name)
+  raises zipfile.BadZipFile, and a broken .pdf raises a pypdf error.
+  Both map to the same ValueError the API layer already turns into a
+  400, so a malformed upload is a bad request rather than a 500.
+- dispatch is by filename extension, the same as the API contract, so
+  no content sniffing is implied here beyond the archive signature
+  check that keeps a non-ZIP out of the docx path.
+
+There is no Flask involvement; the 20 MB body cap lives in this module.
+"""
+
+import zipfile
 from pathlib import Path
 
 from docx import Document
 from pypdf import PdfReader
+from pypdf.errors import PyPdfError
 
 SUPPORTED_EXTENSIONS = {
     ".pdf",
@@ -10,6 +32,15 @@ SUPPORTED_EXTENSIONS = {
     ".md",
 }
 MAX_FILE_SIZE = 20 * 1024 * 1024
+
+# A meeting transcript needs far less than this, and a legitimate note
+# that exceeds it is a parse error rather than a silent truncation.
+MAX_EXTRACTED_CHARS = 200_000
+
+# docx is a ZIP archive, so the magic number and required member are the
+# cheapest check that the content matches the extension.
+DOCX_ZIP_SIGNATURE = b"PK\x03\x04"
+DOCX_REQUIRED_MEMBER = "[Content_Types].xml"
 
 
 def extract_text(uploaded_file):
@@ -23,7 +54,9 @@ def extract_text(uploaded_file):
         Extracted text as a string.
 
     Raises:
-        ValueError: If the file format is unsupported or no text is found.
+        ValueError: If the file format is unsupported, the content does
+            not match its extension, no text is found, or the text is
+            too large to be a meeting transcript.
     """
 
     filename = getattr(uploaded_file, "filename", None) or uploaded_file.name
@@ -34,7 +67,6 @@ def extract_text(uploaded_file):
             f"Unsupported file format: {extension}"
         )
 
-    # Basic size guard (depends on Flask MAX_CONTENT_LENGTH as well)
     if hasattr(uploaded_file, "seek") and hasattr(uploaded_file, "tell"):
         uploaded_file.seek(0, 2)  # Seek to end
         size = uploaded_file.tell()
@@ -56,44 +88,64 @@ def extract_text(uploaded_file):
     )
 
 
-def _extract_pdf(uploaded_file):
-    reader = PdfReader(uploaded_file)
+def _bounded(text):
+    """Reject a result too large to be a meeting transcript."""
 
-    pages = []
+    if not text:
+        raise ValueError("No readable text was found in the document.")
 
-    for page in reader.pages:
-        text = page.extract_text()
-
-        if text:
-            pages.append(text)
-
-    result = "\n\n".join(pages).strip()
-
-    if not result:
+    if len(text) > MAX_EXTRACTED_CHARS:
         raise ValueError(
-            "No readable text was found in the PDF."
+            "The document contains too much text to treat as meeting "
+            f"notes (limit {MAX_EXTRACTED_CHARS} characters)."
         )
 
-    return result
+    return text
+
+
+def _extract_pdf(uploaded_file):
+    try:
+        reader = PdfReader(uploaded_file)
+        pages = [page.extract_text() for page in reader.pages]
+    except PyPdfError as exc:
+        raise ValueError("The uploaded PDF could not be read.") from exc
+
+    result = "\n\n".join(page for page in pages if page).strip()
+
+    return _bounded(result)
 
 
 def _extract_docx(uploaded_file):
-    document = Document(uploaded_file)
+    data = uploaded_file.read()
+    uploaded_file.seek(0)
 
-    paragraphs = [
-        paragraph.text
-        for paragraph in document.paragraphs
-        if paragraph.text.strip()
-    ]
+    if not data.startswith(DOCX_ZIP_SIGNATURE):
+        raise ValueError("The uploaded .docx is not a valid document.")
+
+    try:
+        with zipfile.ZipFile(uploaded_file) as archive:
+            names = set(archive.namelist())
+
+        if DOCX_REQUIRED_MEMBER not in names:
+            raise ValueError(
+                "The uploaded .docx is missing its content description."
+            )
+    except zipfile.BadZipFile as exc:
+        raise ValueError("The uploaded .docx could not be opened.") from exc
+
+    try:
+        document = Document(uploaded_file)
+        paragraphs = [
+            paragraph.text
+            for paragraph in document.paragraphs
+            if paragraph.text.strip()
+        ]
+    except (zipfile.BadZipFile, KeyError, ValueError, TypeError) as exc:
+        raise ValueError("The uploaded .docx could not be read.") from exc
 
     result = "\n\n".join(paragraphs).strip()
 
-    if not result:
-        raise ValueError(
-            "No readable text was found in the DOCX file."
-        )
-
-    return result
+    return _bounded(result)
 
 
 def _extract_text_file(uploaded_file):
@@ -102,14 +154,13 @@ def _extract_text_file(uploaded_file):
     else:
         data = uploaded_file.read()
 
-    try:
-        result = data.decode("utf-8").strip()
-    except UnicodeDecodeError:
-        result = data.decode("utf-8-sig").strip()
+    for encoding in ("utf-8", "utf-8-sig"):
+        try:
+            result = data.decode(encoding).strip()
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        raise ValueError("The uploaded file is not UTF-8 text.")
 
-    if not result:
-        raise ValueError(
-            "The uploaded file is empty."
-        )
-
-    return result
+    return _bounded(result)

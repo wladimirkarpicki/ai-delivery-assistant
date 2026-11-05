@@ -25,7 +25,15 @@ class OpenRouterProvider:
             "Content-Type": "application/json",
         }
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        # Without reraise, tenacity raises RetryError after the last
+        # attempt. The API layer catches (ValueError, RuntimeError,
+        # ConnectionError, TimeoutError), not RetryError, so a failing
+        # upstream surfaced as a 500 instead of the documented fallback.
+        reraise=True,
+    )
     def generate(self, model, prompt):
 
         response = httpx.post(
@@ -45,23 +53,35 @@ class OpenRouterProvider:
 
         response.raise_for_status()
 
-        return response.json()["choices"][0]["message"]["content"]
+        content = response.json()["choices"][0]["message"]["content"]
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+        return content
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
     def embed_texts(self, model, texts):
         """
         Embed a batch of texts. Returns one vector (list of floats) per
         input text, in the same order.
+
+        A short batch is an error rather than a silent gap: the caller
+        matches vectors to items positionally, so a missing vector would
+        silently strip an item of its embedding.
         """
         vectors = []
 
         for offset in range(0, len(texts), 64):
+            batch = list(texts[offset:offset + 64])
+
             response = httpx.post(
                 f"{BASE_URL}/embeddings",
                 headers=self.headers,
                 json={
                     "model": model,
-                    "input": list(texts[offset:offset + 64]),
+                    "input": batch,
                 },
                 timeout=DEFAULT_TIMEOUT,
             )
@@ -69,7 +89,20 @@ class OpenRouterProvider:
             response.raise_for_status()
 
             data = response.json()["data"]
+
+            if len(data) != len(batch):
+                raise ValueError(
+                    "Embedding provider returned "
+                    f"{len(data)} vectors for {len(batch)} texts."
+                )
+
             vectors.extend(item["embedding"] for item in data)
+
+        if len(vectors) != len(texts):
+            raise ValueError(
+                f"Embedding provider returned {len(vectors)} vectors "
+                f"for {len(texts)} texts."
+            )
 
         return vectors
 
