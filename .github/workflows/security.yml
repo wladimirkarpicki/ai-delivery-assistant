@@ -125,7 +125,7 @@ jobs:
         run: |
           mypy api.py database.py models.py document_parser.py analyzer.py \
             matching.py project_memory.py memory_consolidator.py report.py \
-            router.py config_loader.py config.py document_parser_constants.py
+            router.py config_loader.py config.py
 
   test:
     name: Tests (Pytest)
