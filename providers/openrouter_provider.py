@@ -34,19 +34,24 @@ class OpenRouterProvider:
         # upstream surfaced as a 500 instead of the documented fallback.
         reraise=True,
     )
-    def generate(self, model, prompt):
+    def generate(self, model, prompt, system_prompt=None):
+        # Two roles, not one concatenated string. When the instructions
+        # and user-controlled data share a single user message, the data
+        # can override the instructions; separating them is what keeps a
+        # meeting note from steering the analysis.
+        messages = []
+
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
+        messages.append({"role": "user", "content": prompt})
 
         response = httpx.post(
             f"{BASE_URL}/chat/completions",
             headers=self.headers,
             json={
                 "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
+                "messages": messages,
             },
             timeout=DEFAULT_TIMEOUT,
         )

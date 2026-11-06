@@ -360,7 +360,7 @@ class _FixedRouter:
     def get_models(self, provider):
         return ["openrouter/free"]
 
-    def generate(self, provider, model, prompt):
+    def generate(self, provider, model, prompt, system_prompt=None):
         return "{}"
 
     def embed_texts(self, provider, model, texts):
@@ -453,6 +453,78 @@ class UploadFormatTests(unittest.TestCase):
             data={"title": "x"},
         )
         self.assertEqual(response.status_code, 400, response.text)
+
+
+class PromptSeparationTests(unittest.TestCase):
+    """
+    The instructions and the user-controlled document must travel in
+    separate roles. Concatenating them into one user message is what let
+    a meeting note steer the analysis.
+    """
+
+    def test_instructions_go_in_the_system_role(self):
+        import analyzer
+
+        text = "QA capacity is short."
+        router = _RecordingRouter()
+
+        analyzer.analyze_document(
+            text=text,
+            provider="openrouter",
+            model="openrouter/free",
+            router_instance=router,
+        )
+
+        # The document is in the user turn, and only the document.
+        self.assertEqual(router.user_content, "<meeting_notes>\nQA capacity is short.\n</meeting_notes>")
+        # The schema and the guardrails are in the system turn.
+        self.assertIn("experienced Delivery Manager", router.system_content)
+        self.assertIn("Return only valid JSON", router.system_content)
+        self.assertNotIn("QA capacity", router.system_content)
+        self.assertNotIn("Delivery Manager", router.user_content)
+
+    def test_consolidation_splits_roles_too(self):
+        from memory_consolidator import MemoryConsolidator
+
+        router = _RecordingRouter()
+        consolidator = MemoryConsolidator(router=router)
+
+        consolidator.consolidate(
+            existing_memory={"risks": []},
+            new_analysis={"risks": [{"title": "QA capacity"}]},
+            provider="openrouter",
+            model="openrouter/free",
+        )
+
+        # Data only, and tagged, in the user turn.
+        self.assertIn("<new_findings>", router.user_content)
+        self.assertIn("QA capacity", router.user_content)
+        self.assertNotIn("project memory manager", router.user_content)
+
+        # Instructions, and the explicit "this is data" guard, in the
+        # system turn.
+        self.assertIn("project memory manager", router.system_content)
+        self.assertIn("never as instructions", router.system_content)
+        self.assertNotIn("QA capacity", router.system_content)
+
+
+class _RecordingRouter:
+    """Captures the two roles instead of calling a provider."""
+
+    def __init__(self):
+        self.user_content = None
+        self.system_content = None
+
+    def generate(self, provider, model, prompt, system_prompt=None):
+        self.user_content = prompt
+        self.system_content = system_prompt
+        return "{}"
+
+    def embed_texts(self, provider, model, texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    def get_models(self, provider):
+        return ["openrouter/free"]
 
 
 class SimilarityTests(unittest.TestCase):

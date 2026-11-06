@@ -39,12 +39,17 @@ class FakeRouter:
         self.responses = []
         self.embedded_texts = []
         self.prompts = []
+        # Recorded separately so a test can assert the instructions went
+        # in the system role rather than being concatenated into the
+        # user message.
+        self.system_prompts = []
 
     def get_models(self, provider):
         return ["openrouter/free", "unsupported-model"]
 
-    def generate(self, provider, model, prompt):
+    def generate(self, provider, model, prompt, system_prompt=None):
         self.prompts.append(prompt)
+        self.system_prompts.append(system_prompt)
         if not self.responses:
             # Return a minimal valid consolidation response to avoid IndexError
             return json.dumps({

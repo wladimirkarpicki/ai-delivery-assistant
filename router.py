@@ -27,7 +27,8 @@ class ModelRouter:
         self,
         provider,
         model,
-        prompt
+        prompt,
+        system_prompt=None,
     ):
         """
         Send request to selected provider.
@@ -35,7 +36,10 @@ class ModelRouter:
         Args:
             provider (str): provider name
             model (str): model identifier
-            prompt (str): input prompt
+            prompt (str): user-turn content, i.e. the data to act on
+            system_prompt (str | None): instructions for the system role.
+                Passing them separately is what stops a user-controlled
+                document from being read as an instruction.
 
         Returns:
             str: generated response
@@ -43,10 +47,10 @@ class ModelRouter:
 
         selected_provider = self._get_provider(provider)
 
-
         return selected_provider.generate(
             model=model,
-            prompt=prompt
+            prompt=prompt,
+            system_prompt=system_prompt,
         )
 
 
