@@ -1,0 +1,54 @@
+# Prometheus alerting rules for ai-delivery-assistant.
+# Loaded from /etc/prometheus/alerts.yml, which compose.yml mounts from
+# ./monitoring/alerts.yml (a volume mount, not a bind into the image).
+# prometheus.yml references it via rule_files.
+#
+# Metric provenance: no application metric is invented here. The app
+# exposes its numbers as authenticated JSON at GET /api/metrics and has
+# no Prometheus text-format endpoint, so the only metrics that exist for
+# the job 'ai-delivery-assistant' are the ones Prometheus itself produces
+# for every scrape target: up, scrape_duration_seconds and
+# scrape_samples_scraped (the last two documented per-target scrape
+# metrics, present with up=0 when a scrape fails). The fourth rule uses
+# a documented Prometheus self-monitoring metric from the 'prometheus'
+# self-scrape. Any future application metric must be added by the owner
+# of api.py; this file will not guess names.
+
+groups:
+  - name: ai-delivery-assistant
+    rules:
+      - alert: AidaAppDown
+        expr: up{job="ai-delivery-assistant"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: ai-delivery-assistant scrape target is down
+          description: "Prometheus cannot scrape job ai-delivery-assistant (target app:8000, path /metrics) for at least 2 minutes. Expected right now: the application has no Prometheus text-format endpoint at /metrics, the SPA fallback route answers that path, and /api/metrics requires a bearer token. This alert stays pending until the app exposes /metrics in Prometheus text format or the scrape config is fixed by its owners."
+
+      - alert: AidaScrapeNoSamples
+        expr: scrape_samples_scraped{job="ai-delivery-assistant"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: ai-delivery-assistant scrape exposes zero samples
+          description: "The scrape of job ai-delivery-assistant reports zero samples for at least 5 minutes. This is the current state of the stack, not a transient blip: GET /api/metrics returns application JSON behind authentication, and /metrics is served by the SPA fallback route. The project metrics (status_distribution, resolution_rate, per_project) therefore exist only in the JSON API, not in Prometheus."
+
+      - alert: AidaScrapeSlow
+        expr: scrape_duration_seconds{job="ai-delivery-assistant"} > 5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: ai-delivery-assistant scrape takes longer than 5 seconds
+          description: The last scrape of job ai-delivery-assistant took more than 5 seconds for at least 15 minutes. scrape_duration_seconds is a real per-target metric that Prometheus records for every scrape, so the threshold has a numeric backing. It does not fire while the target has no /metrics endpoint (failed scrapes finish fast); it covers the case where a future endpoint is slow enough to risk the scrape timeout.
+
+      - alert: PrometheusConfigReloadFailed
+        expr: prometheus_config_last_reload_successful == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Prometheus failed to reload its configuration
+          description: Prometheus reports prometheus_config_last_reload_successful = 0 for at least 5 minutes. The last reload of prometheus.yml and monitoring/alerts.yml (rule_files) failed, so rule and target changes are not in effect. Inspect the Prometheus logs and validate monitoring/alerts.yml with promtool.

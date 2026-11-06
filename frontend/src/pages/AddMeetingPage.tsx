@@ -9,6 +9,18 @@ import { addMeeting, getHealth } from "../lib/api"
  * redirects to the meeting record carrying the same flash messages
  * (consolidation warning first, then the success notice).
  */
+/**
+ * Health reason codes map to operator-facing copy. The API returns a
+ * code, not a sentence, so an unauthenticated caller cannot learn which
+ * provider, model or key state the app is in.
+ */
+const HEALTH_REASON_MESSAGES: Record<string, string> = {
+  model_list_unavailable:
+    "The analysis model list could not be loaded. Try again shortly.",
+  default_model_unavailable:
+    "The analysis model is temporarily unavailable. Try again shortly.",
+}
+
 export default function AddMeetingPage() {
   const { projectId } = useParams()
   const navigate = useNavigate()
@@ -21,7 +33,12 @@ export default function AddMeetingPage() {
     getHealth()
       .then((health) => {
         setAnalysisReady(health.analysis_ready)
-        if (health.error) setError(health.error)
+        if (health.reason) {
+          setError(
+            HEALTH_REASON_MESSAGES[health.reason] ??
+              "The analysis service is not ready yet.",
+          )
+        }
       })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : String(e))

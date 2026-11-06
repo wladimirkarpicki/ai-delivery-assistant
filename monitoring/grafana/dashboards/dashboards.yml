@@ -1,0 +1,17 @@
+# Grafana dashboard provisioning for ai-delivery-assistant.
+# Mounted into the grafana container by compose.yml:
+#   ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+# Every *.json file in this directory is picked up as a dashboard.
+
+apiVersion: 1
+
+providers:
+  - name: ai-delivery-assistant
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

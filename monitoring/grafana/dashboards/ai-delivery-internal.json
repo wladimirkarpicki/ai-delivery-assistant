@@ -1,0 +1,331 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Internal ops dashboard for the ai-delivery-assistant monitoring stack. Scope, stated plainly: only metrics that Prometheus produces for itself exist. Up and scrape health come from the ai-delivery-assistant target (app:8000, path /metrics) and the prometheus self-scrape, plus the documented Prometheus self-monitoring metric prometheus_config_last_reload_successful. Application request or error counters do not exist: the app exposes authenticated JSON at GET /api/metrics and no Prometheus text-format endpoint, so no application metric is shown or invented on this dashboard.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Availability",
+      "type": "row",
+      "description": "up for both scrape targets defined in monitoring/prometheus.yml, and whether Prometheus's last configuration reload succeeded."
+    },
+    {
+      "description": "up for the ai-delivery-assistant scrape target (app:8000, path /metrics). 1 means the scrape succeeded and exposed samples, 0 means it failed or exposed nothing. Currently 0 because the app has no Prometheus text-format endpoint. Backs the AidaAppDown rule in monitoring/alerts.yml.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"ai-delivery-assistant\"}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "App target up (ai-delivery-assistant)",
+      "type": "stat"
+    },
+    {
+      "description": "up for the prometheus self-scrape target (localhost:9090). 1 means Prometheus is scraping itself and its self-monitoring metrics are fresh; 0 means the Prometheus container is unreachable or misconfigured.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"prometheus\"}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Prometheus self-scrape up",
+      "type": "stat"
+    },
+    {
+      "description": "Documented Prometheus self-monitoring metric from the prometheus self-scrape. 1 means the last reload of prometheus.yml and monitoring/alerts.yml (loaded through rule_files) succeeded; 0 means it failed, so rule and target changes are not in effect. Backs the PrometheusConfigReloadFailed rule in monitoring/alerts.yml.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "prometheus_config_last_reload_successful",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Prometheus config reload status",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 5,
+      "title": "Scrape health",
+      "type": "row",
+      "description": "Per-target scrape metrics Prometheus records for the ai-delivery-assistant job over the dashboard time range."
+    },
+    {
+      "description": "Samples exposed by each scrape of job ai-delivery-assistant. Real per-target metric. A flat line at 0 is the current state and is the condition behind the AidaScrapeNoSamples rule: the target answers /metrics with the SPA fallback route, so no Prometheus text-format data is exposed.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "scrape_samples_scraped{job=\"ai-delivery-assistant\"}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Samples scraped per scrape",
+      "type": "timeseries"
+    },
+    {
+      "description": "Duration of each scrape of job ai-delivery-assistant, in seconds. Real per-target metric. The AidaScrapeSlow rule fires above 5 seconds for 15 minutes, so a sustained rise here is an early warning once the app exposes /metrics.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "scrape_duration_seconds{job=\"ai-delivery-assistant\"}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Scrape duration",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "id": 8,
+      "title": "Application error rate",
+      "type": "row",
+      "description": "No application error metric exists, so this row documents the gap instead of charting an invented series."
+    },
+    {
+      "description": "No application error metric exists in Prometheus, and the row says so rather than charting an invented series. The scrape-level failure signals that do exist are shown in the rows above.",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 9,
+      "options": {
+        "mode": "markdown",
+        "content": "**No application error rate exists.**\n\nPrometheus holds no request counters for ai-delivery-assistant. api.py defines no `/metrics` route, ships no `prometheus_client` instrumentation (no Counter, Histogram, Gauge or Summary), and serves `GET /api/metrics` as JSON behind a bearer token. There is no request total, no error count, no latency histogram and no 5xx counter to graph, so this row has nothing real to chart.\n\nThe failure signals that do exist are scrape-level and appear in the rows above:\n\n- `up{job=\"ai-delivery-assistant\"}`: state of the app:8000 scrape target\n- `scrape_samples_scraped{job=\"ai-delivery-assistant\"}`: 0 while the target exposes no Prometheus data\n- `scrape_duration_seconds{job=\"ai-delivery-assistant\"}`: last scrape duration, thresholded by AidaScrapeSlow in monitoring/alerts.yml\n\nAn error rate panel replaces this text once the app's owner publishes request and error counters at `/metrics` and they show up in the ai-delivery-assistant scrape target. Naming a metric here now would be a guess, so the panel describes the gap instead."
+      },
+      "title": "Application error rate: metric does not exist",
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "ai-delivery-assistant",
+    "internal",
+    "ops"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "AI Delivery Assistant: internal ops",
+  "uid": "aida-internal-ops",
+  "version": 1,
+  "weekStart": ""
+}

@@ -193,7 +193,60 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertTrue(body["analysis_ready"])
-        self.assertIn("openrouter/free", body["model"])
+        # reason is the only non-boolean field, and it carries a code,
+        # not a sentence.
+        self.assertIsNone(body["reason"])
+
+    def test_metrics_is_prometheus_not_the_spa(self):
+        """
+        monitoring/prometheus.yml scrapes /metrics, so this route must
+        answer in Prometheus exposition format. Before it existed the SPA
+        catch-all replied with index.html, so Prometheus scraped zero
+        samples and the whole monitoring stack was decorative.
+        """
+        response = self.client.get("/metrics")
+        self.assertEqual(response.status_code, 200, response.text)
+
+        content_type = response.headers.get("content-type", "")
+        self.assertIn("text/plain", content_type)
+        self.assertNotIn("text/html", content_type)
+
+        body = response.text
+        self.assertNotIn("<!doctype", body.lower())
+
+        for metric in (
+            "aida_projects",
+            "aida_meetings",
+            "aida_open_risks",
+            "aida_open_items_total",
+        ):
+            self.assertIn(f"# TYPE {metric} gauge", body)
+            self.assertRegex(body, rf"(?m)^{metric} \d+$")
+
+        # Values come from the ledger, so they must be real integers.
+        for line in body.splitlines():
+            if line.startswith("aida_open_items_total"):
+                self.assertGreaterEqual(int(line.split()[1]), 0)
+
+    def test_health_does_not_disclose_provider_or_key_state(self):
+        """
+        /api/health has no authenticated caller to hide behind, so it
+        must not confirm which vendor or model the app depends on, nor
+        whether the provider key is configured.
+        """
+        response = self.client.get("/api/health")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertNotIn("model", body)
+        self.assertNotIn("error", body)
+        self.assertIn("analysis_ready", body)
+
+        for forbidden in ("openrouter", "model", "api_key", "OPENROUTER_API_KEY"):
+            self.assertNotIn(
+                forbidden,
+                str(body).lower(),
+                f"health response discloses {forbidden!r}",
+            )
 
     # ------------------------------------------------------------------
     # Projects

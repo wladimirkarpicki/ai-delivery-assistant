@@ -1,0 +1,335 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Project-level dashboard for ai-delivery-assistant. Data limitation, stated plainly: the application exposes its numbers as authenticated JSON (GET /api/metrics) and does not expose Prometheus text-format metrics at any path. The Prometheus job ai-delivery-assistant (monitoring/prometheus.yml) scrapes http://app:8000/metrics, a route api.py does not define, so the SPA fallback route answers it and scrape_samples_scraped stays 0. Every panel here therefore uses only metrics Prometheus produces for its own scrape targets: up, scrape_duration_seconds, scrape_samples_scraped. Rows for status distribution, resolution rate and per-project counts carry their unavailable application data as documented text with the exact JSON keys and the endpoint that holds them, because inventing metric names would be worse than showing nothing.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Scrape status: job ai-delivery-assistant",
+      "type": "row",
+      "description": "Synthetic metrics Prometheus records for the app:8000 /metrics scrape target defined in monitoring/prometheus.yml. These are the only app-related series that exist."
+    },
+    {
+      "description": "Value of up for the ai-delivery-assistant scrape target (app:8000, metrics path /metrics). 1 means the scrape succeeded and exposed samples, 0 means it failed or exposed nothing. Currently 0: the app has no Prometheus text-format endpoint.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"ai-delivery-assistant\"}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Target up (job ai-delivery-assistant)",
+      "type": "stat"
+    },
+    {
+      "description": "Steps below the value on the target's most recent scrape. Real per-target metric Prometheus records for every scrape of job ai-delivery-assistant. Zero means the endpoint at /metrics exposes no Prometheus text-format data, which is the current state of the app.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "scrape_samples_scraped{job=\"ai-delivery-assistant\"}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Samples scraped per scrape",
+      "type": "stat"
+    },
+    {
+      "description": "Length of the most recent scrape of job ai-delivery-assistant, in seconds. Real per-target metric Prometheus records for every scrape. A value near 0 with up equal to 0 means the scrape fails fast; a value over 5 is the threshold behind the AidaScrapeSlow rule in monitoring/alerts.yml.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "scrape_duration_seconds{job=\"ai-delivery-assistant\"}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Last scrape duration",
+      "type": "stat"
+    },
+    {
+      "description": "Samples exposed by each scrape of job ai-delivery-assistant over the dashboard time range (now-24h to now). A flat line at 0 is the current state: the target answers /metrics with the SPA fallback route, not with Prometheus text format.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "scrape_samples_scraped{job=\"ai-delivery-assistant\"}",
+          "instant": false,
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Scrape samples over time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 6,
+      "title": "Status distribution",
+      "type": "row",
+      "description": "Count of projects per delivery status. The app computes this in GET /api/metrics as JSON behind authentication; Prometheus holds no series for it, so this row documents the data instead of faking a metric."
+    },
+    {
+      "description": "No Prometheus series backs this row. The panel states which endpoint holds the data and the exact keys it returns, so the row can be rebuilt as soon as the app exposes Prometheus text format or a JSON API datasource is provisioned.",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "id": 7,
+      "options": {
+        "mode": "markdown",
+        "content": "**Data not available from Prometheus.**\n\nThe app computes project status counts only in the authenticated JSON endpoint `GET /api/metrics`, response key `status_distribution`, an array of objects:\n\n- `status`: human-readable delivery status, one of \"on track\", \"at risk\", \"off track\", \"delivered\", \"blocked\", \"unknown\" (the app stores snake_case values and replaces underscores with spaces)\n- `count`: number of projects with that status\n\n`GET /api/metrics` requires a bearer token (`Depends(get_current_user)` in api.py), and the job `ai-delivery-assistant` scrapes `/metrics`, a route api.py does not define: the SPA fallback route answers it. Prometheus therefore holds no project status series and no panel on this row can be backed by real data.\n\nTo make this row real:\n\n1. Expose the counts in Prometheus text format at `/metrics` (for example `aida_project_status{status=\"on track\"} 4`), which the job already scrapes; or\n2. Provision a JSON API datasource (Grafana Infinity) and point the panel at `GET /api/metrics`.\n\nThis dashboard cannot do it with the single Prometheus datasource that `monitoring/grafana/datasources/prometheus.yml` provisions."
+      },
+      "title": "Status distribution: application JSON only, not Prometheus",
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "id": 8,
+      "title": "Resolution rate",
+      "type": "row",
+      "description": "Share of risks, blockers and action items that are no longer open. The app returns it as a float from GET /api/metrics; no Prometheus series carries it, so this row documents the data instead of faking a metric."
+    },
+    {
+      "description": "No Prometheus series backs this row. The panel states which endpoint holds the data and the exact keys it returns, so the row can be rebuilt as soon as the app exposes Prometheus text format or a JSON API datasource is provisioned.",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 9,
+      "options": {
+        "mode": "markdown",
+        "content": "**Data not available from Prometheus.**\n\n`GET /api/metrics` returns `resolution_rate`: a float, the share of every recorded risk, blocker and action item that is resolved or completed. An empty ledger reads as 1.0. The backing counts are in the same response under `totals`:\n\n- `resolved_risks`, `resolved_blockers`, `resolved_actions`\n- `open_risks`, `open_blockers`, `open_actions`\n\nNone of these values exist in Prometheus, because the app has no Prometheus text-format endpoint at `/metrics`. The scrape target for job `ai-delivery-assistant` exposes no samples at all: `scrape_samples_scraped` is 0.\n\nTo make this row real:\n\n1. Publish a gauge such as `aida_resolution_rate` plus counters for the six totals through `/metrics`; or\n2. Provision a JSON API datasource (Grafana Infinity) and plot `resolution_rate` from `GET /api/metrics`.\n\nA number here that was not read from one of those two sources would be invented, so this row shows the contract instead."
+      },
+      "title": "Resolution rate: application JSON only, not Prometheus",
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 10,
+      "title": "Per-project counts",
+      "type": "row",
+      "description": "Meetings and open risks, blockers and action items per project. The app returns them from GET /api/metrics and GET /api/dashboard as JSON behind authentication; no Prometheus series carries them, so this row documents the data instead of faking a metric."
+    },
+    {
+      "description": "No Prometheus series backs this row. The panel states which endpoint holds the data and the exact keys it returns, so the row can be rebuilt as soon as the app exposes Prometheus text format or a JSON API datasource is provisioned.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 11,
+      "options": {
+        "mode": "markdown",
+        "content": "**Data not available from Prometheus.**\n\n`GET /api/metrics` returns `per_project`: one object per project with these keys:\n\n- `project_id`, `name`\n- `meetings`: Meeting rows for the project\n- `open_risks`, `open_blockers`, `open_actions`: items with status \"open\"\n\n`GET /api/dashboard` returns a similar per-project shape plus `status`, `progress`, `open_risks`, `open_blockers`, `open_actions`, `meeting_count` and `last_meeting`.\n\nBoth endpoints require a bearer token, and neither is in Prometheus text format. Prometheus scrapes `/metrics`, which the app does not implement, so there is no series with a project label to group by.\n\nTo make this row real:\n\n1. Emit one counter per project through `/metrics` with a project label (for example `aida_open_risks{project=\"Platform\"} 3`); or\n2. Provision a JSON API datasource (Grafana Infinity) and point a table panel at `GET /api/dashboard`.\n\nThe application statuses behind these counts, from the code: risks and blockers move between \"open\" and \"resolved\", action items between \"open\" and \"completed\", and risk impact is \"high\", \"medium\", \"low\" or \"unknown\"."
+      },
+      "title": "Per-project counts: application JSON only, not Prometheus",
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "ai-delivery-assistant",
+    "project-overview"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "AI Delivery Assistant: project overview",
+  "uid": "aida-project-overview",
+  "version": 1,
+  "weekStart": ""
+}

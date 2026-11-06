@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 # re-export loses select()'s overloads, so mypy then reads a multi-column
 # select as a single-argument call.
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from analyzer import analyze_document, parse_analysis
@@ -143,6 +144,14 @@ class PasswordResetIn(BaseModel):
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCKOUT_SECONDS = 15 * 60
 
+# Cache for the provider's model list, and the TTL applied to a failed
+# lookup so an unauthenticated /api/health cannot spend the app's rate
+# limit quota. Success is cached for the life of the process because the
+# list changes rarely; a failure is retried after this interval.
+MODELS_FAILURE_TTL_SECONDS = 60
+_models_cache: list | None = None
+_models_cache_failure_at: float | None = None
+
 # In-process login rate limiting: username -> (failures, first failure ts).
 _failed_logins: dict = {}
 
@@ -192,7 +201,32 @@ def _clear_failed_logins(username: str) -> None:
 def get_available_models(router):
     # Dynamic discovery from the provider API. Used as a health check:
     # the add-meeting form fails fast if the default model is missing.
-    return router.get_models(DEFAULT_PROVIDER)
+    #
+    # Failures are cached with a TTL. /api/health is unauthenticated, so
+    # without this every request burns a provider call, and once the
+    # provider starts rate limiting the app's own quota the first 429
+    # takes down every add-meeting request too.
+    global _models_cache, _models_cache_failure_at
+
+    if _models_cache is not None:
+        return _models_cache
+
+    now = time.monotonic()
+
+    if _models_cache_failure_at is not None:
+        if now - _models_cache_failure_at < MODELS_FAILURE_TTL_SECONDS:
+            raise RuntimeError("The model list is temporarily unavailable.")
+        # TTL expired: forget the failure and try again.
+        _models_cache_failure_at = None
+
+    try:
+        models = router.get_models(DEFAULT_PROVIDER)
+    except Exception as exception:
+        _models_cache_failure_at = now
+        raise RuntimeError("The model list could not be loaded.") from exception
+
+    _models_cache = models
+    return models
 
 
 def get_project_memory(project_id):
@@ -292,8 +326,13 @@ def ensure_item_embeddings(router, memory):
             EMBEDDING_MODEL,
             [canonical for _, _, canonical in pending],
         )
-    except (ValueError, RuntimeError, ConnectionError, TimeoutError):
+    except (ValueError, RuntimeError, KeyError, TypeError, ConnectionError, TimeoutError):
         # Silent degradation: lexical candidate ranking still works.
+        return memory
+
+    if len(vectors) != len(pending):
+        # The caller matches vectors to items positionally, so a short
+        # batch must not quietly leave some items unembedded.
         return memory
 
     for (section, item, _), vector in zip(pending, vectors):
@@ -304,7 +343,11 @@ def ensure_item_embeddings(router, memory):
         if row is not None:
             row.title_embedding = vector
 
-    db.session.commit()
+    # No commit here. This helper runs in the middle of the caller's
+    # meeting transaction: committing would persist a meeting row whose
+    # analysis has not been applied yet, so a later rollback would leave
+    # a "ghost" meeting that also blocks re-submitting the same notes
+    # through the duplicate guard. The caller owns the transaction.
 
     return memory
 
@@ -841,25 +884,27 @@ def create_app(router_instance=None, database_url=None):
     @app.get("/api/health")
     def health():
         """
-        The add-meeting gate: the app always analyzes with the fixed
-        OpenRouter route, the model list is only a health check so the
-        form can fail fast.
+        Readiness gate for the add-meeting form: the app always analyzes
+        with the fixed OpenRouter route, so the form only needs to know
+        whether that route is usable.
+
+        The response is deliberately minimal. It used to return the model
+        name and the raw provider error, which told an unauthenticated
+        caller which vendor and exact model the app depends on, and
+        whether the API key was configured at all.
         """
         try:
             models = get_available_models(router)
-        except (ValueError, RuntimeError) as exception:
-            return {"analysis_ready": False, "model": None, "error": str(exception)}
+        except (ValueError, RuntimeError):
+            # A stable reason code, never the provider's own message:
+            # the key-missing case is a configuration detail, not
+            # something to confirm to an anonymous caller.
+            return {"analysis_ready": False, "reason": "model_list_unavailable"}
 
-        selected_model = DEFAULT_MODEL if DEFAULT_MODEL in models else None
+        if DEFAULT_MODEL not in models:
+            return {"analysis_ready": False, "reason": "default_model_unavailable"}
 
-        if selected_model is None:
-            return {
-                "analysis_ready": False,
-                "model": None,
-                "error": "The default model is currently unavailable.",
-            }
-
-        return {"analysis_ready": True, "model": selected_model, "error": None}
+        return {"analysis_ready": True, "reason": None}
 
     @app.get("/api/dashboard")
     def dashboard(user: dict = Depends(get_current_user)):
@@ -885,6 +930,63 @@ def create_app(router_instance=None, database_url=None):
             })
 
         return {"rows": rows}
+
+    @app.get("/metrics", include_in_schema=False)
+    def prometheus_metrics():
+        """
+        Prometheus exposition format, scraped by the monitoring stack.
+
+        This route is the reason monitoring/prometheus.yml has something
+        to scrape. Before it existed, /metrics was answered by the SPA
+        catch-all with index.html, so Prometheus recorded zero samples
+        and every dashboard and alert was decorative.
+
+        Values are counted per scrape rather than kept in process
+        counters: a single-user app has no request volume worth tracking
+        in-process, and the ledger is the source of truth. The endpoint
+        needs no bearer token because it exposes counts, not content,
+        and the scrape config cannot authenticate.
+        """
+        counts = {
+            "projects": db.session.query(func.count(Project.id)).scalar() or 0,
+            "meetings": db.session.query(func.count(Meeting.id)).scalar() or 0,
+            "history_events": db.session.query(func.count(HistoryEvent.id)).scalar() or 0,
+            "open_risks": db.session.query(func.count(Risk.id)).filter(Risk.status == "open").scalar() or 0,
+            "open_blockers": db.session.query(func.count(Blocker.id)).filter(Blocker.status == "open").scalar() or 0,
+            "open_action_items": db.session.query(func.count(ActionItem.id)).filter(ActionItem.status == "open").scalar() or 0,
+        }
+        total = (
+            counts["open_risks"] + counts["open_blockers"] + counts["open_action_items"]
+        )
+
+        lines = [
+            "# HELP aida_projects Number of projects recorded.",
+            "# TYPE aida_projects gauge",
+            f"aida_projects {counts['projects']}",
+            "# HELP aida_meetings Number of meetings recorded.",
+            "# TYPE aida_meetings gauge",
+            f"aida_meetings {counts['meetings']}",
+            "# HELP aida_history_events Number of history events recorded.",
+            "# TYPE aida_history_events gauge",
+            f"aida_history_events {counts['history_events']}",
+            "# HELP aida_open_risks Risks still open.",
+            "# TYPE aida_open_risks gauge",
+            f"aida_open_risks {counts['open_risks']}",
+            "# HELP aida_open_blockers Blockers still open.",
+            "# TYPE aida_open_blockers gauge",
+            f"aida_open_blockers {counts['open_blockers']}",
+            "# HELP aida_open_action_items Action items still open.",
+            "# TYPE aida_open_action_items gauge",
+            f"aida_open_action_items {counts['open_action_items']}",
+            "# HELP aida_open_items_total Open risks, blockers and action items combined.",
+            "# TYPE aida_open_items_total gauge",
+            f"aida_open_items_total {total}",
+        ]
+
+        return Response(
+            content="\n".join(lines) + "\n",
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     @app.get("/api/metrics")
     def metrics(user: dict = Depends(get_current_user)):
@@ -1275,7 +1377,12 @@ def create_app(router_instance=None, database_url=None):
                 response["warning"] = warning  # type: ignore[assignment]
 
             return response
-        except (ValueError, RuntimeError) as exception:
+        except (ValueError, RuntimeError, SQLAlchemyError) as exception:
+            # SQLAlchemyError is in the tuple on purpose. SQLite does not
+            # enforce varchar(n), so a too-long value from an LLM (or a
+            # long upload filename) is only caught on a real PostgreSQL,
+            # where it raises DataError. Without this, that surface is a
+            # 500 instead of a 400, and the session is left dirty.
             db.session.rollback()
             return error_response(str(exception))
 

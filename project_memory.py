@@ -1,3 +1,4 @@
+﻿import logging
 from datetime import date
 
 from database import db
@@ -12,10 +13,70 @@ from models import (
     utcnow,
 )
 
+# varchar(n) widths from schema.sql, for the columns that LLM output can
+# actually overflow. SQLite does not enforce these, so a too-long value
+# is silently accepted locally and then fails on a real PostgreSQL.
+# Anything not listed here goes to a column that is TEXT (unbounded) or
+# is validated elsewhere.
+COLUMN_LIMITS = {
+    "delivery_status": 20,
+    "status": 20,
+    "impact": 20,
+    "owner": 160,
+    "title": 300,
+    "canonical_title": 300,
+    "provider": 30,
+    "model": 120,
+    "action": 30,
+    "event_type": 40,
+    "entity_type": 40,
+}
+
+
+def _bounded(value, key):
+    """Clamp a value to the width of the column it is written into."""
+
+    limit = COLUMN_LIMITS.get(key)
+
+    if limit is None or not isinstance(value, str):
+        return value
+
+    return value[:limit]
+
+
+# The statuses the reports and the resolution-rate metric understand.
+# Anything outside this set is invisible to both: a stranded item then
+# reads as "nothing outstanding" while it still sits in the database.
+ITEM_STATUSES = {"open", "resolved", "completed"}
+
+logger = logging.getLogger("ai-delivery-assistant.memory")
+
+
+def _normalize_status(value, fallback="open"):
+    """
+    Map an LLM-supplied status onto the set the code understands.
+
+    An unrecognized value becomes the fallback and is logged, so the
+    drift is visible instead of silently excluded from the reports.
+    """
+
+    status = value.strip().lower() if isinstance(value, str) else ""
+
+    if status in ITEM_STATUSES:
+        return status
+
+    if status:
+        logger.warning(
+            "Unrecognized item status %r; treating it as %r.", status, fallback
+        )
+
+    return fallback
+
 
 def _value(item, key, default=""):
     value = item.get(key, default) if isinstance(item, dict) else default
-    return value.strip() if isinstance(value, str) else value
+    value = value.strip() if isinstance(value, str) else value
+    return _bounded(value, key)
 
 
 def _find_by_canonical_title(model, project_id, title):
@@ -485,7 +546,7 @@ def _apply_consolidation_item(
                 details=_value(new_item, "details"),
                 owner=_value(new_item, "owner"),
                 due_date=due_date,
-                status=_value(new_item, "status", "open"),
+                status=_normalize_status(_value(new_item, "status", "open")),
                 created_in_meeting_id=meeting.id,
                 updated_in_meeting_id=meeting.id,
             )
@@ -498,7 +559,7 @@ def _apply_consolidation_item(
                 description=_value(new_item, "description"),
                 impact=_value(new_item, "impact", "unknown"),
                 mitigation=_value(new_item, "mitigation"),
-                status=_value(new_item, "status", "open"),
+                status=_normalize_status(_value(new_item, "status", "open")),
                 created_in_meeting_id=meeting.id,
                 updated_in_meeting_id=meeting.id,
             )
@@ -509,7 +570,7 @@ def _apply_consolidation_item(
                 title=title,
                 canonical_title=normalize_title(title),
                 description=_value(new_item, "description"),
-                status=_value(new_item, "status", "open"),
+                status=_normalize_status(_value(new_item, "status", "open")),
                 created_in_meeting_id=meeting.id,
                 updated_in_meeting_id=meeting.id,
             )
@@ -1123,7 +1184,7 @@ def apply_review_create(project, meeting, entity_type, plan_item):
             details=_value(new_item, "details"),
             owner=_value(new_item, "owner"),
             due_date=due_date,
-            status=_value(new_item, "status", "open") or "open",
+            status=_normalize_status(_value(new_item, "status", "open")),
             created_in_meeting_id=meeting.id,
             updated_in_meeting_id=meeting.id,
         )
@@ -1133,7 +1194,7 @@ def apply_review_create(project, meeting, entity_type, plan_item):
             title=title,
             canonical_title=canonical,
             description=_value(new_item, "description"),
-            status=_value(new_item, "status", "open") or "open",
+            status=_normalize_status(_value(new_item, "status", "open")),
             created_in_meeting_id=meeting.id,
             updated_in_meeting_id=meeting.id,
         )

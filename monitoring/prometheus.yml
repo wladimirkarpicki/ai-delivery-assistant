@@ -4,6 +4,13 @@ global:
   external_labels:
     project: 'ai-delivery-assistant'
 
+# Alerting rules, mounted from ./monitoring/alerts.yml by compose.yml
+# (prometheus service volumes). Prometheus resolves rule_files paths
+# inside the container, hence /etc/prometheus/alerts.yml, matching the
+# mount target ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro.
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
   - job_name: 'prometheus'
     static_configs:

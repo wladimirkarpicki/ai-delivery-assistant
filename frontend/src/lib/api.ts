@@ -241,8 +241,13 @@ export interface Metrics {
 
 export interface HealthInfo {
   analysis_ready: boolean
-  model: string | null
-  error: string | null
+  /**
+   * Why the app is not ready, or null when it is. A stable code rather
+   * than a free-text message: /api/health is unauthenticated, so it must
+   * not confirm which vendor or model the app depends on, nor whether a
+   * provider key is configured.
+   */
+  reason: "model_list_unavailable" | "default_model_unavailable" | null
 }
 
 export interface ManualResolveResult {

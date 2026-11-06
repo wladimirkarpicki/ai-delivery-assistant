@@ -92,6 +92,7 @@ services:
       - backend
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - promdata_ai:/prometheus
     deploy:
       resources:
@@ -118,6 +119,7 @@ services:
     volumes:
       - grafdata_ai:/var/lib/grafana
       - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
     deploy:
