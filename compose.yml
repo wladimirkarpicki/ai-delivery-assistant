@@ -115,7 +115,11 @@ services:
     ports:
       - "127.0.0.1:3001:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required with --profile monitoring}
+      # Loopback only: no credentials default to admin/admin any more.
+      # This service is behind --profile monitoring, so its variable must
+      # not be a hard requirement: a mandatory ${VAR:?} here fails a plain
+      # "docker compose up" for a service that is not even starting.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
     volumes:
       - grafdata_ai:/var/lib/grafana
       - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
