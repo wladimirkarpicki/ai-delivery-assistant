@@ -147,6 +147,44 @@ jobs:
       - name: Run Pytest
         run: python -m pytest -q --cov=. --cov-report=term-missing
 
+  migrations:
+    name: Migrations (Alembic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      # The documented invocation, from the repository root, is the one
+      # that used to fail: alembic only reads the ini next to the current
+      # working directory, and there was none at the root.
+      - name: Alembic heads from the repo root
+        run: python -m alembic heads
+      - name: Alembic history from the repo root
+        run: python -m alembic history
+      # Every revision file on disk must appear in the chain, so an
+      # unregistered or orphaned migration fails CI rather than being
+      # discovered during a deploy.
+      - name: Migration chain covers every revision file
+        run: |
+          set -euo pipefail
+          # "--" before the first pattern and "-e" before the second: grep
+          # would otherwise read the leading "-" of "->" as an option.
+          on_disk=$(ls migrations/versions/*.py | grep -vc -- '/env.py$' || true)
+          in_chain=$(python -m alembic history | grep -c -e '->' || true)
+          echo "revision files on disk: $on_disk"
+          echo "revisions in the chain: $in_chain"
+          if [ "$on_disk" != "$in_chain" ]; then
+            echo "::error::migration chain does not match the files on disk"
+            exit 1
+          fi
+          echo "chain is complete and covers every file"
+
   frontend-audit:
     name: Frontend Audit (pnpm audit)
     runs-on: ubuntu-latest

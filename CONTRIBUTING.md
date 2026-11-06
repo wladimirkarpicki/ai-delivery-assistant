@@ -13,15 +13,30 @@ Thanks for helping improve this project. This document describes a local develop
 
 You need Python 3.13 and PostgreSQL 16 available on your machine.
 
+The project environment is `.venv`, created with [uv](https://docs.astral.sh/uv/)
+(any recent version) and pinned to Python 3.13 so local runs match CI and the
+Docker image, which is `python:3.13-slim`.
+
 ```powershell
-python -m venv venv
-venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+uv venv --python 3.13 .venv
+uv pip install --python .venv\Scripts\python.exe -r requirements.txt -r requirements-dev.txt
 ```
 
-On macOS and Linux, activate with `source venv/bin/activate` instead of the `Activate.ps1` line.
+If `.venv` already exists from an older setup, add `--clear` to the first
+command to rebuild it from scratch: `uv venv --python 3.13 .venv --clear`.
+That is the right call after a dependency change, because uv does not remove
+packages that are no longer requested.
 
-`requirements.txt` also carries the dev tooling: pytest, coverage, black, and ruff.
+Activate with `.venv\Scripts\Activate.ps1`; on macOS and Linux use
+`.venv/bin/activate` instead. `python` on `PATH` is not the project
+interpreter: on Windows it usually resolves to a Microsoft Store alias and a
+different install, which is why the gates below always run through
+`.venv\Scripts\python.exe`.
+
+`requirements.txt` carries the runtime dependencies plus ruff, black, pytest
+and coverage. `requirements-dev.txt` carries the rest of the toolchain that CI
+depends on: mypy, bandit, safety, pytest-cov, and git-filter-repo. Install both
+files, or linting and typing will fail on a missing import.
 
 ## 2. Configure the environment
 

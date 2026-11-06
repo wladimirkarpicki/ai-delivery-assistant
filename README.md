@@ -293,8 +293,13 @@ Create the PostgreSQL database once if it does not already exist.
 Apply the version-controlled schema migrations:
 
 ```powershell
-python -m alembic -c migrations/alembic.ini upgrade head
+python -m alembic upgrade head
 ```
+
+Run this from the repository root. Alembic reads the ini that sits next to the
+current working directory and does not search parents, so the repository root
+carries its own `alembic.ini` that points `script_location` at `migrations/`.
+The copy inside `migrations/` still serves callers that `cd` in first.
 
 ## Docker quickstart
 
