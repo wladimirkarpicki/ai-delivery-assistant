@@ -587,8 +587,15 @@ def create_app(router_instance=None, database_url=None):
             "http://localhost:5173",
             "http://127.0.0.1:5173",
         ],
+        # allow_credentials is required for the session cookie to travel
+        # on cross-origin requests, and it is incompatible with a
+        # wildcard in allow_origins or allow_headers, so both stay
+        # explicit. Authorization stays listed for clients that have not
+        # moved to the cookie yet.
+        allow_credentials=True,
         allow_methods=["*"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type"],
+        expose_headers=[],
     )
 
     @app.middleware("http")
@@ -666,23 +673,118 @@ def create_app(router_instance=None, database_url=None):
     token_ttl = timedelta(hours=get_token_ttl_hours())
     _bearer = HTTPBearer(auto_error=False)
 
+    # The session cookie. It carries the same JWT the JSON body used to
+    # carry, so the frontend can move off localStorage without the API
+    # dropping the old clients mid-flight.
+    COOKIE_NAME = "aida_token"
+    COOKIE_PATH = "/"
+    # SameSite=Strict keeps the cookie off cross-site requests, and
+    # HttpOnly keeps it out of reach of any script on the page. Secure
+    # is only meaningful over TLS and is added per request below.
+    COOKIE_SAMESITE = "strict"
+
     def create_token(user_id: int, username: str) -> str:
         payload = {
             "sub": str(user_id),
             "username": username,
             "exp": datetime.now(UTC) + token_ttl,
+            # An id per issued token, so one session can be signed out
+            # without invalidating the others the same user holds.
+            "jti": secrets.token_urlsafe(16),
         }
         return jwt.encode(payload, secret_key, algorithm="HS256")
 
-    def get_current_user(
-        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    ) -> dict:
-        if credentials is None:
-            raise HTTPException(status_code=401, detail="Not authenticated.")
+    # Ids of tokens that have been signed out. A stateless JWT cannot be
+    # un-issued, so without this the same token stays valid in any other
+    # browser or device until it expires. In-memory on purpose: it is
+    # per-process, which means a restart re-enables nothing longer-lived
+    # than a token's own ttl, and the set never holds whole sessions.
+    _revoked_ids: set[str] = set()
+
+    def _is_revoked(token_value: str) -> bool:
+        """
+        True for a token that has been signed out.
+
+        A stateless JWT cannot be un-issued, so without this a logout
+        only clears the cookie in one browser while the same token stays
+        valid anywhere else until it expires. Only ids are compared, so
+        memory holds ids rather than whole sessions.
+        """
+        if not _revoked_ids:
+            return False
 
         try:
             payload = jwt.decode(
-                credentials.credentials, secret_key, algorithms=["HS256"]
+                token_value,
+                secret_key,
+                algorithms=["HS256"],
+                options={"verify_exp": False},
+            )
+            jti = payload.get("jti")
+        except (jwt.PyJWTError, TypeError, ValueError):
+            return False
+
+        return bool(jti) and jti in _revoked_ids
+
+    def _is_https(request: Request) -> bool:
+        """
+        True when the request arrived over TLS.
+
+        Terminating the proxy in front of the app is common, so honour
+        X-Forwarded-Proto in addition to the scheme the ASGI server saw.
+        """
+
+        forwarded = request.headers.get("x-forwarded-proto", "")
+
+        if forwarded:
+            return forwarded.split(",")[0].strip().lower() == "https"
+
+        return request.url.scheme == "https"
+
+    def set_auth_cookie(response: Response, token: str, request: Request) -> None:
+        response.set_cookie(
+            key=COOKIE_NAME,
+            value=token,
+            max_age=int(token_ttl.total_seconds()),
+            path=COOKIE_PATH,
+            httponly=True,
+            samesite=COOKIE_SAMESITE,
+            secure=_is_https(request),
+        )
+
+    def clear_auth_cookie(response: Response) -> None:
+        """Drop the session cookie, for a token that has become invalid."""
+
+        response.delete_cookie(
+            key=COOKIE_NAME,
+            path=COOKIE_PATH,
+            httponly=True,
+            samesite=COOKIE_SAMESITE,
+        )
+
+    def get_current_user(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    ) -> dict:
+        # The cookie is preferred: it is the form no script can read. The
+        # Authorization header is still accepted so a client that has not
+        # switched over keeps working.
+        token_value: str | None = None
+
+        if credentials is not None:
+            token_value = credentials.credentials
+        else:
+            token_value = request.cookies.get(COOKIE_NAME)
+
+        if not token_value:
+            raise HTTPException(status_code=401, detail="Not authenticated.")
+
+        if _is_revoked(token_value):
+            raise HTTPException(status_code=401, detail="Session has ended.")
+
+        try:
+            payload = jwt.decode(
+                token_value, secret_key, algorithms=["HS256"]
             )
             user_id = int(payload.get("sub", ""))
         except (jwt.PyJWTError, TypeError, ValueError):
@@ -701,7 +803,7 @@ def create_app(router_instance=None, database_url=None):
         return user
 
     @app.post("/api/auth/setup")
-    def auth_setup(data: SetupIn) -> dict:
+    def auth_setup(data: SetupIn, request: Request):
         """
         Create the initial admin. Only available while no user exists,
         and only to a caller who knows the one-time bootstrap token.
@@ -735,14 +837,21 @@ def create_app(router_instance=None, database_url=None):
         db.session.add(user)
         db.session.commit()
 
-        return {
-            "access_token": create_token(user.id, user.username),
+        token = create_token(user.id, user.username)
+        payload = {
+            "access_token": token,
             "token_type": "bearer",  # nosec B105  # token_type is the OAuth2 scheme, not a password
             "user": {"id": user.id, "username": user.username, "role": user.role},
         }
 
+        # The cookie is the form no script can read; the body field stays
+        # so older clients keep working until they are migrated off it.
+        response = JSONResponse(payload)
+        set_auth_cookie(response, token, request)
+        return response
+
     @app.post("/api/auth/login")
-    def auth_login(data: CredentialsIn) -> dict:
+    def auth_login(data: CredentialsIn, request: Request):
         """
         Sign in with rate limiting: five failures per username lock it
         for 15 minutes; a success clears the counter.
@@ -762,11 +871,51 @@ def create_app(router_instance=None, database_url=None):
 
         _clear_failed_logins(data.username)
 
-        return {
-            "access_token": create_token(user.id, user.username),
+        token = create_token(user.id, user.username)
+        payload = {
+            "access_token": token,
             "token_type": "bearer",  # nosec B105  # token_type is the OAuth2 scheme, not a password
             "user": {"id": user.id, "username": user.username, "role": user.role},
         }
+
+        response = JSONResponse(payload)
+        set_auth_cookie(response, token, request)
+        return response
+
+    @app.post("/api/auth/logout")
+    def auth_logout(request: Request):
+        """
+        End the session by expiring the cookie and revoking the token.
+
+        Clearing the cookie alone is not enough: a JWT is valid wherever
+        it is presented, so the same token copied out of a request would
+        keep working. The token's id is recorded as signed out so every
+        presentation of it is refused, not just this browser's.
+        """
+        token_value = request.cookies.get(COOKIE_NAME)
+        authorization = request.headers.get("authorization", "")
+
+        if not token_value and authorization.lower().startswith("bearer "):
+            token_value = authorization[7:].strip()
+
+        if token_value:
+            try:
+                payload = jwt.decode(
+                    token_value,
+                    secret_key,
+                    algorithms=["HS256"],
+                    options={"verify_exp": False},
+                )
+                jti = payload.get("jti")
+                if jti:
+                    _revoked_ids.add(jti)
+            except (jwt.PyJWTError, TypeError, ValueError):
+                # An unreadable token is already refused; nothing to revoke.
+                pass
+
+        response = JSONResponse({"signed_out": True})
+        clear_auth_cookie(response)
+        return response
 
     @app.get("/api/auth/me")
     def auth_me(user: dict = Depends(get_current_user)) -> dict:

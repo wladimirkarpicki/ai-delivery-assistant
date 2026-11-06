@@ -1,13 +1,18 @@
 /**
- * Bearer-token storage for the API client.
+ * Session shape for the API client.
  *
- * The token lives in localStorage under TOKEN_KEY; every request the
- * client sends carries it as an Authorization header. The API refuses
- * dead tokens with 401, and the client reacts by dropping the token
- * and returning to the sign-in page (see lib/api.ts).
+ * There is no token storage here any more. The session lives in an
+ * httpOnly cookie issued by /api/auth/login and /api/auth/setup, which
+ * JavaScript cannot read, so no client code can either hold or leak it.
+ * lib/api.ts sends it with `credentials: "include"`.
+ *
+ * auth_user is still persisted because the shell needs to render the
+ * signed-in identity before any request resolves, and it carries no
+ * capability: the role is re-read from the database on every request
+ * server-side, so editing this value in devtools grants nothing.
  */
 
-const TOKEN_KEY = "aida_token"
+const USER_KEY = "aida_user"
 
 export interface AuthUser {
   id: number
@@ -15,28 +20,46 @@ export interface AuthUser {
   role: "user" | "admin"
 }
 
-export function getToken(): string | null {
+export function setAuthUser(user: AuthUser): void {
   try {
-    return localStorage.getItem(TOKEN_KEY)
+    localStorage.setItem(USER_KEY, JSON.stringify(user))
   } catch {
-    // Storage can be unavailable (private mode); auth then simply
-    // never persists, exactly like being signed out.
+    // Storage can be unavailable (private mode); the shell then shows
+    // defaults until the first request resolves, which is harmless.
+  }
+}
+
+export function getAuthUser(): AuthUser | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY)
+
+    if (!raw) {
+      return null
+    }
+
+    const parsed: unknown = JSON.parse(raw)
+
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as AuthUser).id === "number" &&
+      typeof (parsed as AuthUser).username === "string" &&
+      ((parsed as AuthUser).role === "user" ||
+        (parsed as AuthUser).role === "admin")
+    ) {
+      return parsed as AuthUser
+    }
+
+    return null
+  } catch {
+    // Malformed or unreadable storage reads as signed out.
     return null
   }
 }
 
-export function setToken(token: string): void {
+export function removeAuthUser(): void {
   try {
-    localStorage.setItem(TOKEN_KEY, token)
-  } catch {
-    // Ignore storage failures: the session just won't survive a
-    // reload.
-  }
-}
-
-export function removeToken(): void {
-  try {
-    localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(USER_KEY)
   } catch {
     // Nothing stored, nothing to drop.
   }

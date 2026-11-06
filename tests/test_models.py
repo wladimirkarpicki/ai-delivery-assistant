@@ -576,6 +576,87 @@ class PromptSeparationTests(unittest.TestCase):
         self.assertNotIn("QA capacity", router.system_content)
 
 
+class AuthCookieTests(unittest.TestCase):
+    """
+    The session must travel in an httpOnly cookie, not in a token that
+    JavaScript can read out of localStorage.
+
+    Both forms are accepted during the migration: the cookie is the one
+    no script can reach, and the Authorization header is still honoured
+    so a client that has not switched over keeps working.
+    """
+
+    def setUp(self):
+        config_loader.reset_bootstrap_token()
+        api_module._failed_logins.clear()
+        self.app = api_module.create_app(None, "sqlite://")
+        db.create_all()
+        self.client = TestClient(self.app)
+        self.setup = self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "founder",
+                "password": "founder-pass-123",
+                "bootstrap_token": BOOTSTRAP_TOKEN,
+            },
+        )
+        self.assertEqual(self.setup.status_code, 200, self.setup.text)
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        config_loader.reset_bootstrap_token()
+
+    def test_sign_in_sets_an_httponly_cookie(self):
+        set_cookie = self.setup.headers.get("set-cookie", "")
+        self.assertIn("aida_token=", set_cookie)
+        self.assertIn("HttpOnly", set_cookie)
+        self.assertIn("SameSite=strict", set_cookie)
+        self.assertIn("Path=/", set_cookie)
+        # The cookie and the body carry the same token during the
+        # migration window.
+        self.assertEqual(
+            self.setup.cookies["aida_token"], self.setup.json()["access_token"]
+        )
+
+    def test_cookie_alone_authenticates(self):
+        with TestClient(
+            self.app, cookies={"aida_token": self.setup.cookies["aida_token"]}
+        ) as cookie_client:
+            response = cookie_client.get("/api/auth/me")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["username"], "founder")
+
+            projects = cookie_client.get("/api/projects")
+            self.assertEqual(projects.status_code, 200)
+
+    def test_authorization_header_still_accepted(self):
+        with TestClient(
+            self.app,
+            headers={"Authorization": f"Bearer {self.setup.json()['access_token']}"},
+        ) as bearer_client:
+            response = bearer_client.get("/api/auth/me")
+            self.assertEqual(response.status_code, 200)
+
+    def test_dead_cookie_is_refused(self):
+        with TestClient(self.app, cookies={"aida_token": "garbage.token.value"}) as dead:
+            self.assertEqual(dead.get("/api/auth/me").status_code, 401)
+
+    def test_logout_clears_the_cookie(self):
+        # The cookie is httpOnly, so the client cannot expire it itself:
+        # without a logout endpoint it would survive a client-side sign
+        # out and be re-adopted on the next request.
+        response = self.client.post("/api/auth/logout")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("aida_token", response.headers.get("set-cookie", ""))
+
+    def test_logout_then_cookie_is_rejected(self):
+        self.client.post("/api/auth/logout")
+        token = self.setup.cookies["aida_token"]
+        with TestClient(self.app, cookies={"aida_token": token}) as after:
+            self.assertEqual(after.get("/api/auth/me").status_code, 401)
+
+
 class _RecordingRouter:
     """Captures the two roles instead of calling a provider."""
 

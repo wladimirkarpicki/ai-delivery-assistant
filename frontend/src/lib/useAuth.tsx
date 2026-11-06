@@ -1,12 +1,18 @@
 /**
- * Auth context: resolves the stored bearer token into the live
- * account on mount, signs users in and out.
+ * Auth context: resolves the live account on mount, signs users in and
+ * out.
  *
- * The API re-reads the account on every request, so this state is a
- * convenience copy: the header badge, the RequireAuth gate, and the
- * admin-only routes read it. A dead token is dropped by lib/api.ts
- * (401 -> /login) before this state could go stale visibly.
+ * The session itself is an httpOnly cookie, so this state is only a
+ * convenience copy of who is signed in: the header badge, the RequireAuth
+ * gate, and the admin-only routes read it. The role is re-read from the
+ * database on every request server-side, so editing this copy grants
+ * nothing.
+ *
+ * On mount, whether a session exists is decided by the server: a cookie
+ * that is absent or dead answers /api/auth/me with 401, which is what
+ * makes this a real check rather than a guess from local storage.
  */
+
 import {
   createContext,
   useContext,
@@ -16,7 +22,12 @@ import {
 } from "react"
 
 import { authLogin, getMe, type AuthResponse } from "./api"
-import { getToken, removeToken, setToken, type AuthUser } from "./auth"
+import {
+  getAuthUser,
+  removeAuthUser,
+  setAuthUser,
+  type AuthUser,
+} from "./auth"
 
 interface AuthState {
   user: AuthUser | null
@@ -25,47 +36,72 @@ interface AuthState {
   signIn: (username: string, password: string) => Promise<void>
   /** Adopt a session the setup bootstrap just issued. */
   adoptSession: (data: AuthResponse) => void
-  /** Drop the token and forget the account. */
+  /** Forget the account. The cookie is cleared by signing out below. */
   signOut: () => void
 }
 
 const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null)
+  // Start from the cached identity so the shell does not flash a signed
+  // out layout on every reload; the request below corrects it.
+  const [user, setUser] = useState<AuthUser | null>(() => getAuthUser())
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = getToken()
-
-    if (!token) {
-      setLoading(false)
-      return
-    }
+    let cancelled = false
 
     getMe()
-      .then(setUser)
+      .then((account) => {
+        if (cancelled) {
+          return
+        }
+        setUser(account)
+        setAuthUser(account)
+      })
       .catch(() => {
-        removeToken()
+        if (cancelled) {
+          return
+        }
+        // The cookie is dead or absent, which is the server's answer to
+        // "is anyone signed in". The copy is dropped to match.
+        removeAuthUser()
         setUser(null)
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   async function signIn(username: string, password: string) {
     const data = await authLogin(username, password)
-    setToken(data.access_token)
+    setAuthUser(data.user)
     setUser(data.user)
   }
 
   function adoptSession(data: AuthResponse) {
-    setToken(data.access_token)
+    setAuthUser(data.user)
     setUser(data.user)
   }
 
   function signOut() {
-    removeToken()
+    removeAuthUser()
     setUser(null)
+    // Ask the server to expire the cookie as well, otherwise the
+    // httpOnly session survives this logout.
+    void fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => {
+      // A failed logout call leaves the cookie in place; the next
+      // request then re-adopts the session, which is the safe failure.
+    })
   }
 
   return (

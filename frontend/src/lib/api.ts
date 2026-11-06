@@ -3,12 +3,17 @@
  *
  * All shapes mirror the JSON serializers on the server one-to-one;
  * validation failures surface as ApiError with the server's message.
- * Every request carries the bearer token from lib/auth.ts; when the
- * API refuses a token that was sent (401), the token is dead and the
- * client returns to the sign-in page.
+ *
+ * Authentication travels in an httpOnly cookie set by /api/auth/login and
+ * /api/auth/setup, so no token is readable from JavaScript and nothing
+ * here manages one. `credentials: "include"` is what makes the browser
+ * send it; when the API refuses a session (401) the client returns to
+ * the sign-in page.
  */
 
-import { getToken, removeToken, type AuthUser } from "./auth"
+import type { AuthUser } from "./auth"
+
+export { type AuthUser }
 
 export class ApiError extends Error {
   status: number
@@ -22,19 +27,20 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
-  const token = getToken()
 
-  if (token) headers.set("Authorization", `Bearer ${token}`)
-
-  const response = await fetch(path, { ...init, headers })
+  const response = await fetch(path, {
+    ...init,
+    headers,
+    // Send the httpOnly session cookie on every request, including
+    // cross-origin ones in development.
+    credentials: "include",
+  })
 
   if (!response.ok) {
-    // A 401 for an authenticated request means the token is gone
-    // (expired, revoked, account deleted): drop it and sign in
-    // again. Unauthenticated 401s are ordinary login refusals and
-    // stay on the sign-in page as errors.
-    if (response.status === 401 && token) {
-      removeToken()
+    // A 401 means the session is gone (expired, revoked, account
+    // deleted): go back to sign-in. There is no local token to drop,
+    // because the cookie is httpOnly and managed by the browser.
+    if (response.status === 401) {
       window.location.assign("/login")
     }
 
