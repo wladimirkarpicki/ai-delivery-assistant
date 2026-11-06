@@ -49,3 +49,23 @@ Include as much of the following as you can:
 ## What to Expect
 
 We acknowledge a new report within 72 hours and aim to provide an initial assessment within 7 days. We may ask for additional detail while investigating. Once a fix is ready we coordinate disclosure, publish the advisory, and credit reporters who want attribution.
+
+## Known Gaps
+
+These are tracked in the open and are accepted for the current stage of the project. They are not covered by the out-of-scope list above because they have a concrete exploit path.
+
+### The bearer token is still issued from `localStorage`
+
+The client stores the JWT under the `aida_token` key in `localStorage` (`frontend/src/lib/auth.ts`) and sends it as an `Authorization: Bearer` header. Any script that manages to run in the page can read the token and exfiltrate the session, which is why the token's storage is a real exposure even with the CSP in place.
+
+**Current mitigation:** a Content-Security-Policy with no `unsafe-inline` and no `unsafe-eval` in `script-src`, so an injected inline script does not execute, plus `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'` and `X-Frame-Options: DENY`.
+
+**Remaining work, in order:**
+
+1. Issue an `httpOnly`, `SameSite=Strict`, `Path=/` cookie (with `Secure` when the request is HTTPS) from `/api/auth/login` and `/api/auth/setup`, and clear it with `Max-Age=0` when a token is rejected. `create_token` in `api.py` is the single place a token is minted, so the response path is the only place that needs to change.
+2. Accept the cookie as well as the header in `get_current_user` (`api.py`), so existing sessions and the test suite keep working during the switch.
+3. Switch `frontend/src/lib/api.ts` to `credentials: 'include'` and stop setting the `Authorization` header, then reduce `frontend/src/lib/auth.ts` to the user-shape helpers it still needs. The 401 handler already drops the token and redirects, so that half needs no change.
+4. Set `allow_credentials=True` on the CORS middleware and replace the wildcard-adjacent `allow_headers` with the exact list. `allow_origins` must stay an explicit list, since credentials cannot be combined with a wildcard origin.
+5. Add a test that asserts the token is absent from `localStorage` after sign-in, and that the cookie is `httpOnly`.
+
+The blast radius has been measured and is small: four references in `auth.ts`, one header assignment in `api.ts`, and the theme key in `AppShell.tsx`, which is unrelated and stays in `localStorage`.
