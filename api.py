@@ -592,6 +592,41 @@ def create_app(router_instance=None, database_url=None):
     )
 
     @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        # A CSP with no unsafe-inline in script-src is what makes the
+        # next layer of defence real: the client reads the bearer token
+        # from localStorage today, so any injected script can simply read
+        # it back out. This header costs nothing and lands independently
+        # of the cookie migration.
+        #
+        # style-src stays 'unsafe-inline' because the design assets in
+        # static/ carry inline style attributes; tightening that is a
+        # separate change. The one inline script that must run is the
+        # pre-paint theme block in frontend/index.html, allowed by hash
+        # rather than by unsafe-inline, so its exact bytes are pinned.
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'sha256-SpAlGCCFsricsGUdodyI/o/5Hb573esmO8SjeD7Mw7M='; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "font-src 'self'; "
+            "connect-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'none'; "
+            "form-action 'self'; "
+            "frame-src 'none'"
+        )
+        # The remaining response headers are the standard set for a JSON
+        # API that serves one SPA.
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+    @app.middleware("http")
     async def request_session_scope(request: Request, call_next):
         # One scoped session per request, independent of the
         # threadpool thread that runs the endpoint.

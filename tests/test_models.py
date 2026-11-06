@@ -18,11 +18,14 @@ half is checked against the real metadata, which is what sqlite does
 keep.
 """
 
+import base64
+import hashlib
 import io
 import os
 import unittest
 import zipfile
 from datetime import date
+from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
@@ -453,6 +456,73 @@ class UploadFormatTests(unittest.TestCase):
             data={"title": "x"},
         )
         self.assertEqual(response.status_code, 400, response.text)
+
+
+class SecurityHeaderTests(unittest.TestCase):
+    """
+    The CSP and the rest of the response headers are what make the next
+    layer of defence real. The token is still read from localStorage, so
+    an injected script could read it back out; the header at least stops
+    the injection from loading.
+    """
+
+    def setUp(self):
+        config_loader.reset_bootstrap_token()
+        api_module._failed_logins.clear()
+        self.app = api_module.create_app(_FixedRouter(), "sqlite://")
+        db.create_all()
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        config_loader.reset_bootstrap_token()
+
+    def test_csp_present_on_every_response_type(self):
+        for path in ("/api/health", "/api/openapi.json", "/api/docs", "/api/projects/1"):
+            response = self.client.get(path)
+            csp = response.headers.get("content-security-policy", "")
+            self.assertTrue(csp, f"{path} carried no CSP")
+            self.assertIn("default-src 'self'", csp)
+
+    def test_script_src_has_no_unsafe_inline(self):
+        csp = self.client.get("/api/health").headers["content-security-policy"]
+        script_src = csp.split("; ")[1]
+        self.assertTrue(script_src.startswith("script-src"))
+        self.assertNotIn("unsafe-inline", script_src)
+        self.assertNotIn("unsafe-eval", script_src)
+
+    def test_csp_pins_the_one_inline_script_by_hash(self):
+        """
+        frontend/index.html carries a pre-paint theme script that must
+        run before the stylesheet, so it cannot simply be banned. It is
+        allowed by hash, which pins its exact bytes.
+        """
+        from pathlib import Path
+
+        csp = self.client.get("/api/health").headers["content-security-policy"]
+        self.assertIn("'sha256-", csp)
+
+        # The digest must match the real file, or the theme silently
+        # stops working in production.
+        html = Path("frontend/index.html").read_text(encoding="utf-8")
+        start = html.index("<script>") + len("<script>")
+        block = html[start:html.index("</script>", start)]
+        digest = "sha256-" + base64.b64encode(
+            hashlib.sha256(block.encode("utf-8")).digest()
+        ).decode("ascii")
+        self.assertIn(digest, csp, "CSP hash does not match index.html")
+
+    def test_remaining_security_headers(self):
+        response = self.client.get("/api/health")
+        self.assertEqual(response.headers.get("x-content-type-options"), "nosniff")
+        self.assertEqual(
+            response.headers.get("referrer-policy"), "strict-origin-when-cross-origin"
+        )
+        self.assertEqual(
+            response.headers.get("cross-origin-opener-policy"), "same-origin"
+        )
+        self.assertEqual(response.headers.get("x-frame-options"), "DENY")
 
 
 class PromptSeparationTests(unittest.TestCase):
