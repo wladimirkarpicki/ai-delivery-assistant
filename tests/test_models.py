@@ -22,10 +22,10 @@ import base64
 import hashlib
 import io
 import os
+import pathlib
 import unittest
 import zipfile
 from datetime import date
-from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
@@ -498,14 +498,12 @@ class SecurityHeaderTests(unittest.TestCase):
         run before the stylesheet, so it cannot simply be banned. It is
         allowed by hash, which pins its exact bytes.
         """
-        from pathlib import Path
-
         csp = self.client.get("/api/health").headers["content-security-policy"]
         self.assertIn("'sha256-", csp)
 
         # The digest must match the real file, or the theme silently
         # stops working in production.
-        html = Path("frontend/index.html").read_text(encoding="utf-8")
+        html = pathlib.Path("frontend/index.html").read_text(encoding="utf-8")
         start = html.index("<script>") + len("<script>")
         block = html[start:html.index("</script>", start)]
         digest = "sha256-" + base64.b64encode(
