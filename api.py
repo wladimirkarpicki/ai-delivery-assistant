@@ -38,6 +38,7 @@ from pydantic import BaseModel, Field
 # select as a single-argument call.
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import selectinload
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from analyzer import analyze_document, parse_analysis
@@ -908,25 +909,62 @@ def create_app(router_instance=None, database_url=None):
 
     @app.get("/api/dashboard")
     def dashboard(user: dict = Depends(get_current_user)):
+        """
+        One row per project for the overview table.
+
+        Counts and the last-meeting timestamp are aggregated in a fixed
+        number of grouped queries rather than per project: the docstring
+        below /api/metrics claims the same discipline, and until now the
+        dashboard did not honour it. Measured before the change, 50
+        projects issued 302 SELECTs; /api/metrics issued 22 regardless of
+        project count.
+        """
+        projects = (
+            Project.query.order_by(Project.updated_at.desc())
+            # project.state is a lazy relationship, so touching it inside
+            # the loop issued one extra query per project. Eager-loading it
+            # turns that into a single batched lookup.
+            .options(selectinload(Project.state))
+            .all()
+        )
+
+        # project_id -> aggregate, for each of the four counts. A missing
+        # key means zero, which is what the per-row lookups default to.
+        def _grouped(model, status=None):
+            query = select(model.project_id, func.count(model.id))
+
+            if status is not None:
+                query = query.where(model.status == status)
+
+            return dict(db.session.execute(query.group_by(model.project_id)).all())
+
+        risk_open = _grouped(Risk, "open")
+        blocker_open = _grouped(Blocker, "open")
+        action_open = _grouped(ActionItem, "open")
+        meeting_count = _grouped(Meeting)
+
+        last_meeting = {
+            row[0]: row[1]
+            for row in db.session.execute(
+                select(Meeting.project_id, func.max(Meeting.created_at)).group_by(
+                    Meeting.project_id
+                )
+            ).all()
+        }
+
         rows = []
 
-        for project in Project.query.order_by(Project.updated_at.desc()).all():
+        for project in projects:
             state = project.state
             rows.append({
                 "project": {"id": project.id, "name": project.name},
                 "status": (state.delivery_status if state else "unknown").replace("_", " "),
                 "progress": state.progress_summary if state else "No meeting analysis yet.",
-                "open_risks": Risk.query.filter_by(project_id=project.id, status="open").count(),
-                "open_blockers": Blocker.query.filter_by(project_id=project.id, status="open").count(),
-                "open_actions": ActionItem.query.filter_by(project_id=project.id, status="open").count(),
-                "meeting_count": Meeting.query.filter_by(project_id=project.id).count(),
-                "last_meeting": _dt(
-                    db.session.scalar(
-                        select(func.max(Meeting.created_at)).where(
-                            Meeting.project_id == project.id
-                        )
-                    )
-                ),
+                "open_risks": risk_open.get(project.id, 0),
+                "open_blockers": blocker_open.get(project.id, 0),
+                "open_actions": action_open.get(project.id, 0),
+                "meeting_count": meeting_count.get(project.id, 0),
+                "last_meeting": _dt(last_meeting.get(project.id)),
             })
 
         return {"rows": rows}
