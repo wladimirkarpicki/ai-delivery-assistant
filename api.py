@@ -1351,10 +1351,26 @@ def create_app(router_instance=None, database_url=None):
             )
         ]
 
+        # The activity timeline renders a bounded window of months, so the
+        # rows it needs are bounded too. Without the window this loads
+        # every Meeting and HistoryEvent row into Python on each request,
+        # and HistoryEvent grows with every event of every item of every
+        # meeting, so the cost rises for the life of the database.
+        #
+        # The bound is a datetime comparison, not a dialect-specific date
+        # function: the tests run on SQLite and production on PostgreSQL,
+        # and strftime and date_trunc each exist in only one of them.
+        ACTIVITY_WINDOW_MONTHS = 24
+
         def month_counts(model):
             counts: dict[tuple[int, int], int] = {}
+            cutoff = datetime.now(UTC) - timedelta(
+                days=ACTIVITY_WINDOW_MONTHS * 30
+            )
 
-            for (created_at,) in db.session.query(model.created_at).all():
+            for (created_at,) in db.session.execute(
+                select(model.created_at).where(model.created_at >= cutoff)
+            ).all():
                 if created_at is None:
                     continue
 

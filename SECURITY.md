@@ -1,4 +1,4 @@
-﻿# Security Policy
+# Security Policy
 
 ## Supported Versions
 
@@ -52,4 +52,24 @@ We acknowledge a new report within 72 hours and aim to provide an initial assess
 
 ## Known Gaps
 
-None currently open. The bearer-token exposure listed here previously is closed: the session now travels in an `httpOnly`, `SameSite=strict` cookie with `Secure` when the request is TLS, the client no longer reads or stores a token, a Content-Security-Policy without `unsafe-inline` in `script-src` blocks inline script execution, and `/api/auth/logout` revokes the token's id rather than only clearing the cookie in one browser.
+### Token revocation is in-memory and does not survive a restart
+
+`/api/auth/logout` records the token id in an in-process set and rejects
+that id on every later request, so a token copied out of one browser stops
+working everywhere. The set is not persisted.
+
+After a restart a revoked token is accepted again until its own `exp`, which
+is `TOKEN_TTL_HOURS` (default 12). The practical exposure is therefore
+bounded by the token lifetime, which is also the current mitigation: keep
+`TOKEN_TTL_HOURS` short for any deployment where logging out is expected to
+take effect immediately.
+
+A production fix needs the revocation list persisted, either as a table
+checked on each request or an external store. That is not implemented.
+
+### The activity timeline reads a 24-month window
+
+`/api/metrics` bounds `month_counts` to the trailing 24 months rather than
+reading every row. Rows older than the window are absent from the timeline
+by design, not by accident, and the window is the constant to change if a
+longer history is needed.

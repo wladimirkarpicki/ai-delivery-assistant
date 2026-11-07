@@ -658,6 +658,103 @@ class AuthCookieTests(unittest.TestCase):
             self.assertEqual(after.get("/api/auth/me").status_code, 401)
 
 
+class ActivityWindowTests(unittest.TestCase):
+    """
+    The activity timeline must read a bounded window, not the whole table.
+
+    HistoryEvent gains a row on every event of every item of every meeting,
+    so an unbounded read grows for the life of the database and the request
+    cost rises with it. The timeline renders a bounded set of months anyway,
+    so the query is bounded to match.
+    """
+
+    def setUp(self):
+        config_loader.reset_bootstrap_token()
+        api_module._failed_logins.clear()
+        self.app = api_module.create_app(None, "sqlite://")
+        db.create_all()
+        self.client = TestClient(self.app)
+        self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "founder",
+                "password": "founder-pass-123",
+                "bootstrap_token": BOOTSTRAP_TOKEN,
+            },
+        )
+        token = self.client.post(
+            "/api/auth/login",
+            json={"username": "founder", "password": "founder-pass-123"},
+        ).json()["access_token"]
+        self.client.headers["Authorization"] = f"Bearer {token}"
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        config_loader.reset_bootstrap_token()
+
+    def test_older_than_the_window_is_excluded(self):
+        from datetime import UTC, datetime, timedelta
+
+        from models import HistoryEvent, Meeting, Project
+
+        project = Project(name="Windowed", description="")
+        db.session.add(project)
+        db.session.flush()
+
+        def add_meeting(months_ago):
+            created = datetime.now(UTC) - timedelta(days=months_ago * 30)
+            meeting = Meeting(
+                project_id=project.id,
+                title=f"m{months_ago}",
+                original_text="t",
+                analysis_text="a",
+                analysis_json="{}",
+                provider="p",
+                model="m",
+            )
+            db.session.add(meeting)
+            db.session.flush()
+            meeting.created_at = created
+            db.session.flush()
+            return meeting
+
+        recent = add_meeting(2)
+        old = add_meeting(60)
+        db.session.commit()
+
+        for meeting, label in ((recent, "recent"), (old, "old")):
+            event = HistoryEvent(
+                project_id=project.id,
+                meeting_id=meeting.id,
+                entity_type="risk",
+                entity_id=None,
+                event_type="created",
+                summary=f"{label} event",
+            )
+            db.session.add(event)
+            db.session.flush()
+            event.created_at = meeting.created_at
+            db.session.flush()
+        db.session.commit()
+
+        body = self.client.get("/api/metrics").json()
+        months = [entry["month"] for entry in body["activity_timeline"]]
+
+        # The recent month is present; the one from 60 months back is not,
+        # which is the whole point of the bound.
+        self.assertTrue(months, "timeline should not be empty")
+        self.assertIn(
+            f"{recent.created_at.year:04d}-{recent.created_at.month:02d}",
+            months,
+        )
+        self.assertNotIn(
+            f"{old.created_at.year:04d}-{old.created_at.month:02d}",
+            months,
+            "a month outside the window must not be read at all",
+        )
+
+
 class _RecordingRouter:
     """Captures the two roles instead of calling a provider."""
 
