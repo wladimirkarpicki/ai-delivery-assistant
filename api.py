@@ -223,7 +223,16 @@ def get_available_models(router):
     try:
         models = router.get_models(DEFAULT_PROVIDER)
     except Exception as exception:
+        # Log the cause, return only a code: the response must not tell an
+        # anonymous caller anything about the provider, but an operator
+        # reading the logs needs to know whether this is a missing key, a
+        # rate limit or an unreachable host.
         _models_cache_failure_at = now
+        logging.getLogger("ai-delivery-assistant.models").warning(
+            "model list unavailable: %s: %s",
+            type(exception).__name__,
+            exception,
+        )
         raise RuntimeError("The model list could not be loaded.") from exception
 
     _models_cache = models
