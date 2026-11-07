@@ -7,7 +7,7 @@ import HistoryPage from "./pages/HistoryPage"
 import LoginPage from "./pages/LoginPage"
 import MeetingDetailPage from "./pages/MeetingDetailPage"
 import MeetingsPage from "./pages/MeetingsPage"
-import NotFoundPage from "./pages/NotFoundPage"
+import { NotFoundBody } from "./pages/NotFound"
 import PasswordPage from "./pages/PasswordPage"
 import ProjectOverviewPage from "./pages/ProjectOverviewPage"
 import ProjectsPage from "./pages/ProjectsPage"
@@ -70,7 +70,7 @@ export default function App() {
               </RequireAdmin>
             }
           />
-          <Route path="*" element={<NotFoundPage />} />
+          <Route path="*" element={<NotFoundBody />} />
         </Route>
       </Routes>
     </AuthProvider>
