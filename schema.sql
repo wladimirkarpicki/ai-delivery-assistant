@@ -14,7 +14,10 @@
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
-SET transaction_timeout = 0;
+-- transaction_timeout is PostgreSQL 17+. This schema is loaded by the
+-- postgres:16 container (see compose.yml), where the parameter does not
+-- exist and the statement aborts the whole load, which leaves the
+-- container unhealthy and the app never starting.
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -854,5 +857,8 @@ ALTER TABLE ONLY public.risks
 -- PostgreSQL database dump complete
 --
 
-\unrestrict uKZrnmgMLjTrs3UJ2g7dWPPqjJNoyKPmmovsGiBzc9eBw3pJi69uYLMo7JaTOZ4
+-- \unrestrict and the \restrict on line 6 are a psql 18 meta-command pair.
+-- psql 16 (the postgres:16 container) does not know either one, and the
+-- closing one aborts the load even when the opening one is commented out,
+-- because \unrestrict then reports "not currently in restricted mode".
 
