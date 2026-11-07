@@ -1,4 +1,4 @@
-# Security Policy
+﻿# Security Policy
 
 ## Supported Versions
 
@@ -15,7 +15,7 @@ This policy covers the application code in this repository:
 
 - The FastAPI JSON API served by `api.py`: authentication and user management, projects, meetings, the document parsing pipeline, project memory and consolidation, history, reports, the review queue, and metrics.
 - The React 19 and TypeScript frontend in `frontend/`, including how it handles tokens, roles, and API error responses.
-- The OpenRouter integration (request routing, response schema validation with pydantic, and retry handling).
+- The NVIDIA build integration (request routing, response schema validation with pydantic, and retry handling).
 - The Alembic migrations and database schema in `migrations/`.
 
 ## Out of Scope
@@ -25,7 +25,7 @@ The following are not treated as vulnerabilities in this project:
 - Self-hosted deployments that still run unchanged default credentials, such as the `postgres`/`postgres` database user and password from `compose.yml`, the placeholder `JWT_SECRET_KEY`, or the default Grafana admin password. Change these before exposing a deployment to any network. Deployments running the documented defaults are considered unconfigured, not vulnerable.
 - The hardening the project itself declares as missing. The README states the current implementation is suitable for local development and experimentation and is not production-ready without additional security, observability, and reliability work. Gaps in that declared scope are tracked as normal issues, not security reports.
 - Vulnerabilities in third-party dependencies (FastAPI, React, SQLAlchemy, PyJWT, Vite, and others) unless a concrete exploit path through this application's code is demonstrated. Report dependency issues to their upstream maintainers and mention them here only when this project is affected.
-- Rate limiting or quota problems on the OpenRouter free tier, including spend on a user-supplied API key.
+- Rate limiting or quota problems on the NVIDIA build free tier, including spend on a user-supplied API key.
 - Findings from automated scanners without a reproducible case and an explained impact.
 - Social engineering, phishing, or physical attacks against maintainers or users.
 - Missing transport security on self-managed infrastructure, since this project does not control deployment networking.

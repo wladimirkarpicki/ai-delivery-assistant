@@ -1,4 +1,4 @@
-from providers.openrouter_provider import OpenRouterProvider
+from providers.nvidia_provider import NvidiaProvider
 
 
 class ModelRouter:
@@ -9,7 +9,7 @@ class ModelRouter:
     def __init__(self):
 
         self.provider_classes = {
-            "openrouter": OpenRouterProvider,
+            "nvidia": NvidiaProvider,
         }
         self.providers = {}
 
@@ -21,7 +21,6 @@ class ModelRouter:
             self.providers[provider] = self.provider_classes[provider]()
 
         return self.providers[provider]
-
 
     def generate(
         self,
@@ -53,14 +52,12 @@ class ModelRouter:
             system_prompt=system_prompt,
         )
 
-
     def get_models(self, provider):
         """
         Return available models for provider.
         """
 
         selected_provider = self._get_provider(provider)
-
 
         return selected_provider.get_models()
 

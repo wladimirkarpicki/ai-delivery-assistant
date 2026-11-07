@@ -37,6 +37,7 @@ from sqlalchemy.exc import IntegrityError
 import api as api_module
 import config_loader
 import database
+from config import DEFAULT_MODEL
 from database import db
 from matching import cosine_similarity
 from models import ActionItem, Meeting, Project, Risk, User
@@ -361,7 +362,7 @@ class ConsolidationRegressionTests(unittest.TestCase):
 
 class _FixedRouter:
     def get_models(self, provider):
-        return ["openrouter/free"]
+        return ["minimaxai/minimax-m3.1-flash"]
 
     def generate(self, provider, model, prompt, system_prompt=None):
         return "{}"
@@ -538,8 +539,8 @@ class PromptSeparationTests(unittest.TestCase):
 
         analyzer.analyze_document(
             text=text,
-            provider="openrouter",
-            model="openrouter/free",
+            provider="nvidia",
+            model=DEFAULT_MODEL,
             router_instance=router,
         )
 
@@ -560,8 +561,8 @@ class PromptSeparationTests(unittest.TestCase):
         consolidator.consolidate(
             existing_memory={"risks": []},
             new_analysis={"risks": [{"title": "QA capacity"}]},
-            provider="openrouter",
-            model="openrouter/free",
+            provider="nvidia",
+            model=DEFAULT_MODEL,
         )
 
         # Data only, and tagged, in the user turn.
@@ -673,7 +674,7 @@ class _RecordingRouter:
         return [[1.0, 0.0] for _ in texts]
 
     def get_models(self, provider):
-        return ["openrouter/free"]
+        return ["minimaxai/minimax-m3.1-flash"]
 
 
 class SimilarityTests(unittest.TestCase):
@@ -700,16 +701,18 @@ class RetryExhaustionTests(unittest.TestCase):
         upstream must surface the original exception instead.
         """
 
-        import providers.openrouter_provider as provider_module
+        import providers.nvidia_provider as provider_module
 
         def always_429(*args, **kwargs):
             raise httpx.HTTPStatusError(
                 "429 Too Many Requests",
-                request=httpx.Request("POST", "https://openrouter.ai/api/v1/x"),
+                request=httpx.Request(
+                    "POST", "https://integrate.api.nvidia.com/v1/chat/completions"
+                ),
                 response=httpx.Response(429),
             )
 
-        provider = object.__new__(provider_module.OpenRouterProvider)
+        provider = object.__new__(provider_module.NvidiaProvider)
         provider.headers = {"Authorization": "Bearer x"}
 
         with mock.patch.object(httpx, "post", side_effect=always_429) as posted, \
@@ -724,17 +727,89 @@ class RetryExhaustionTests(unittest.TestCase):
         that returns fewer vectors than texts must fail loudly.
         """
 
-        import providers.openrouter_provider as provider_module
+        import providers.nvidia_provider as provider_module
 
         def short_batch(*args, **kwargs):
+            payload = kwargs.get("json") or {}
+            texts = payload.get("input", [])
             response = mock.Mock()
             response.raise_for_status.return_value = None
-            response.json.return_value = {"data": [{"embedding": [0.1, 0.2]}]}
+            # Echo back one fewer vector than asked for.
+            response.json.return_value = {
+                "data": [{"embedding": [0.1, 0.2]} for _ in texts[1:]]
+            }
             return response
 
-        provider = object.__new__(provider_module.OpenRouterProvider)
+        provider = object.__new__(provider_module.NvidiaProvider)
         provider.headers = {"Authorization": "Bearer x"}
 
         with mock.patch.object(httpx, "post", short_batch), \
                 self.assertRaises(ValueError):
             provider.embed_texts("model", ["a", "b", "c"])
+
+    def test_duplicate_texts_collapse_into_one_request_each(self):
+        """
+        The endpoint answers 500 on a batch containing a repeated string,
+        so identical titles are collapsed and the result expanded back to
+        the caller's order.
+        """
+        import providers.nvidia_provider as provider_module
+
+        requested = []
+
+        def record(*args, **kwargs):
+            payload = kwargs.get("json") or {}
+            batch = payload.get("input", [])
+            requested.append(list(batch))
+            response = mock.Mock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {
+                "data": [{"embedding": [float(i), 0.5]} for i, _ in enumerate(batch)]
+            }
+            return response
+
+        provider = object.__new__(provider_module.NvidiaProvider)
+        provider.headers = {"Authorization": "Bearer x"}
+
+        with mock.patch.object(httpx, "post", record):
+            result = provider.embed_texts(
+                "model", ["same", "other", "same", "third", "other"]
+            )
+
+        # Five texts, three distinct, so no request carried a repeat.
+        for batch in requested:
+            self.assertEqual(len(batch), len(set(batch)), f"duplicate in {batch}")
+        self.assertEqual(len(result), 5, "every input got a vector back")
+        self.assertEqual(result[0], result[2], "the same title, the same vector")
+        self.assertEqual(result[1], result[4])
+        self.assertNotEqual(result[0], result[1])
+
+    def test_batch_never_exceeds_the_endpoint_limit(self):
+        """
+        More than EMBED_BATCH_SIZE texts per request answers 500, so the
+        chunk size is asserted rather than left to chance.
+        """
+        import providers.nvidia_provider as provider_module
+
+        sizes = []
+
+        def record(*args, **kwargs):
+            payload = kwargs.get("json") or {}
+            batch = payload.get("input", [])
+            sizes.append(len(batch))
+            response = mock.Mock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {
+                "data": [{"embedding": [0.1]} for _ in batch]
+            }
+            return response
+
+        provider = object.__new__(provider_module.NvidiaProvider)
+        provider.headers = {"Authorization": "Bearer x"}
+
+        with mock.patch.object(httpx, "post", record):
+            provider.embed_texts("model", [f"title {i}" for i in range(10)])
+
+        limit = provider_module.EMBED_BATCH_SIZE
+        self.assertTrue(all(s <= limit for s in sizes), f"batches {sizes} > {limit}")
+        self.assertEqual(sum(sizes), 10, "all ten texts were embedded")

@@ -1,4 +1,4 @@
-"""Seed the dev database with demo delivery data for the dashboard.
+﻿"""Seed the dev database with demo delivery data for the dashboard.
 
 Runs INSIDE the app container (where models/database and DATABASE_URL
 are available), against the configured PostgreSQL database:
@@ -57,7 +57,7 @@ def when(month, day, hour=10, minute=0):
 
 TEST_PROJECT_STATES = [
     {
-        "name": "OpenRouter Smoke Test",
+        "name": "NVIDIA Smoke Test",
         "delivery_status": "delivered",
         "progress_summary": (
             "Smoke checks against the live Free Models Router passed end to end."

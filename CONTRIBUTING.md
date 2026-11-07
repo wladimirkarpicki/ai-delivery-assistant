@@ -1,4 +1,4 @@
-# Contributing to AI Delivery Assistant
+﻿# Contributing to AI Delivery Assistant
 
 Thanks for helping improve this project. This document describes a local development setup, the commands used day to day, and the workflow for database migrations.
 
@@ -6,7 +6,7 @@ Thanks for helping improve this project. This document describes a local develop
 
 - Backend: Python 3.13, FastAPI, SQLAlchemy 2.x, Alembic, PyJWT bearer sessions (HS256), Werkzeug password hashing
 - Database: PostgreSQL 16
-- AI: the OpenRouter HTTP API (the Free Models Router, `openrouter/free`) through httpx, with tenacity retries and pydantic response validation
+- AI: the NVIDIA build API (`minimaxai/minimax-m3.1-flash` for analysis, `nvidia/nemotron-3.5-embed-1b` for title embeddings) through httpx, with tenacity retries and pydantic response validation
 - Frontend: React 19 with TypeScript, built with Vite, charts with Recharts
 
 ## 1. Backend setup

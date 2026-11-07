@@ -1070,7 +1070,7 @@ def create_app(router_instance=None, database_url=None):
     def health():
         """
         Readiness gate for the add-meeting form: the app always analyzes
-        with the fixed OpenRouter route, so the form only needs to know
+        with the fixed NVIDIA route, so the form only needs to know
         whether that route is usable.
 
         The response is deliberately minimal. It used to return the model

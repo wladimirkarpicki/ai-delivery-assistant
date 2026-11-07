@@ -15,6 +15,7 @@ from werkzeug.security import generate_password_hash
 
 import api as api_module
 from api import create_app
+from config import DEFAULT_MODEL, DEFAULT_PROVIDER
 from database import db
 from models import (
     ActionItem,
@@ -45,7 +46,7 @@ class FakeRouter:
         self.system_prompts = []
 
     def get_models(self, provider):
-        return ["openrouter/free", "unsupported-model"]
+        return [DEFAULT_MODEL, "unsupported-model"]
 
     def generate(self, provider, model, prompt, system_prompt=None):
         self.prompts.append(prompt)
@@ -246,11 +247,16 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("error", body)
         self.assertIn("analysis_ready", body)
 
-        for forbidden in ("openrouter", "model", "api_key", "OPENROUTER_API_KEY"):
+        forbidden = DEFAULT_PROVIDER.split() + [
+            DEFAULT_MODEL,
+            "api_key",
+            "nvidia_api_key",
+        ]
+        for name in forbidden:
             self.assertNotIn(
-                forbidden,
+                name.lower(),
                 str(body).lower(),
-                f"health response discloses {forbidden!r}",
+                f"health response discloses {name!r}",
             )
 
     # ------------------------------------------------------------------
@@ -588,8 +594,8 @@ class ApiTests(unittest.TestCase):
             original_text="text",
             analysis_text="analysis",
             analysis_json={},
-            provider="openrouter",
-            model="openrouter/free",
+            provider="nvidia",
+            model=DEFAULT_MODEL,
             created_at=datetime(2026, 8, 15, tzinfo=UTC),
         )
         db.session.add(august)
@@ -601,8 +607,8 @@ class ApiTests(unittest.TestCase):
             original_text="text two",
             analysis_text="analysis",
             analysis_json={},
-            provider="openrouter",
-            model="openrouter/free",
+            provider="nvidia",
+            model=DEFAULT_MODEL,
             created_at=datetime(2026, 9, 20, tzinfo=UTC),
         )
         db.session.add(september)
@@ -688,8 +694,8 @@ class ApiTests(unittest.TestCase):
             original_text="text",
             analysis_text="analysis",
             analysis_json={},
-            provider="openrouter",
-            model="openrouter/free",
+            provider="nvidia",
+            model=DEFAULT_MODEL,
             created_at=datetime.now(UTC),
         )
         old = Meeting(
@@ -698,8 +704,8 @@ class ApiTests(unittest.TestCase):
             original_text="text two",
             analysis_text="analysis",
             analysis_json={},
-            provider="openrouter",
-            model="openrouter/free",
+            provider="nvidia",
+            model=DEFAULT_MODEL,
             created_at=datetime.now(UTC) - timedelta(days=40),
         )
         db.session.add_all([fresh, old])
