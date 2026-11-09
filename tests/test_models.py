@@ -23,6 +23,7 @@ import hashlib
 import io
 import os
 import pathlib
+import tempfile
 import unittest
 import zipfile
 from datetime import date
@@ -772,14 +773,149 @@ class ExceptionExposureTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
 
-class ActivityWindowTests(unittest.TestCase):
+class RevocationPersistenceTests(unittest.TestCase):
     """
-    The activity timeline must read a bounded window, not the whole table.
+    A logout has to outlive the process.
 
-    HistoryEvent gains a row on every event of every item of every meeting,
-    so an unbounded read grows for the life of the database and the request
-    cost rises with it. The timeline renders a bounded set of months anyway,
-    so the query is bounded to match.
+    The set that holds revoked token ids used to live only in memory, so a
+    restart re-accepted a token the user had signed out, for up to
+    TOKEN_TTL_HOURS afterwards. The failure was invisible in a test suite
+    because each test builds one app and never restarts it.
+
+    The property needs a database that survives the restart, so these
+    tests use a file-backed SQLite: an in-memory database is a new empty
+    one on every connect, which would test nothing.
+    """
+
+    def setUp(self):
+        config_loader.reset_bootstrap_token()
+        api_module._failed_logins.clear()
+
+        # mkstemp rather than NamedTemporaryFile: the file has to outlive
+        # the handle so a relaunched app can open the same database, which
+        # is what makes this a restart rather than a reset.
+        descriptor, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(descriptor)
+        self.database_url = f"sqlite:///{self.db_path.replace(os.sep, '/')}"
+
+        self.app = api_module.create_app(None, self.database_url)
+        db.create_all()
+        self.client = TestClient(self.app)
+        self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "founder",
+                "password": "founder-pass-123",
+                "bootstrap_token": BOOTSTRAP_TOKEN,
+            },
+        )
+        self.token = self.client.post(
+            "/api/auth/login",
+            json={"username": "founder", "password": "founder-pass-123"},
+        ).json()["access_token"]
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        config_loader.reset_bootstrap_token()
+
+        from database import configure_database
+
+        configure_database("sqlite://")
+
+        try:
+            os.unlink(self.db_path)
+        except OSError:
+            pass
+
+    def _relaunch(self):
+        """A new app against the same database: a restart, not a reset."""
+
+        from database import configure_database
+
+        configure_database(self.database_url)
+        return TestClient(api_module.create_app(None, self.database_url))
+
+    def test_revoked_token_is_refused_after_a_restart(self):
+        from datetime import UTC, datetime, timedelta
+
+        from models import RevokedToken
+
+        # The token works.
+        self.assertEqual(self.client.get("/api/auth/me").status_code, 200)
+
+        # Signing out writes a row carrying the token's own expiry.
+        self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
+        rows = db.session.query(RevokedToken.jti, RevokedToken.expires_at).all()
+        self.assertEqual(len(rows), 1)
+        # SQLite hands back a naive datetime and PostgreSQL an aware one,
+        # so the assertion normalises rather than assuming a dialect.
+        expires_at = rows[0].expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        self.assertGreater(expires_at, datetime.now(UTC))
+        self.assertLess(expires_at, datetime.now(UTC) + timedelta(hours=13))
+
+        response = self._relaunch().get(
+            "/api/auth/me", headers={"Authorization": f"Bearer {self.token}"}
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("session has ended", response.json()["detail"].lower())
+
+    def test_a_token_never_signed_out_survives_a_restart(self):
+        response = self._relaunch().get(
+            "/api/auth/me", headers={"Authorization": f"Bearer {self.token}"}
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_expired_rows_are_pruned_on_logout(self):
+        from datetime import UTC, datetime, timedelta
+
+        from models import RevokedToken
+
+        db.session.add(
+            RevokedToken(
+                jti="stale", expires_at=datetime.now(UTC) - timedelta(days=1)
+            )
+        )
+        db.session.add(
+            RevokedToken(
+                jti="live", expires_at=datetime.now(UTC) + timedelta(hours=6)
+            )
+        )
+        db.session.commit()
+
+        self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
+
+        remaining = {row.jti for row in db.session.query(RevokedToken).all()}
+        self.assertNotIn("stale", remaining)
+        self.assertIn("live", remaining)
+        # Plus the row for the token that was just signed out.
+        self.assertEqual(len(remaining), 2)
+
+    def test_a_second_logout_of_the_same_token_does_not_duplicate(self):
+        from models import RevokedToken
+
+        self.client.post("/api/auth/logout")
+        self.client.post("/api/auth/logout")
+
+        self.assertEqual(len(db.session.query(RevokedToken).all()), 1)
+
+
+class ActivityTimelineTests(unittest.TestCase):
+    """
+    The activity timeline must report every month that has data.
+
+    The query counts rows per month. It was changed three times for one
+    reason: the naive form read every created_at into Python and counted
+    there, which is O(rows) per request on a table that grows forever. It
+    was then bounded to a 24-month window, which fixed the cost and
+    introduced silent data loss. The form now aggregates in the database,
+    so the cost is proportional to how many months exist rather than how
+    many rows, and a month is never dropped for being old.
+
+    These tests pin the property that failed: a month with rows in it
+    appears, however far back it is.
     """
 
     def setUp(self):
@@ -853,20 +989,35 @@ class ActivityWindowTests(unittest.TestCase):
         db.session.commit()
 
         body = self.client.get("/api/metrics").json()
-        months = [entry["month"] for entry in body["activity_timeline"]]
+        timeline = {
+            entry["month"]: entry for entry in body["activity_timeline"]
+        }
 
-        # The recent month is present; the one from 60 months back is not,
-        # which is the whole point of the bound.
-        self.assertTrue(months, "timeline should not be empty")
+        # Both months are present. An earlier version of this query read
+        # every row into Python and counted there, which was O(rows) per
+        # request on a table that grows forever. It was then bounded to a
+        # 24-month window, which dropped history and made an old month
+        # indistinguishable from an empty one. The query now aggregates in
+        # the database, so the work is proportional to how many months
+        # exist rather than how many rows do, and no month is missing.
+        self.assertTrue(timeline, "timeline should not be empty")
+
+        recent_key = f"{recent.created_at.year:04d}-{recent.created_at.month:02d}"
+        old_key = f"{old.created_at.year:04d}-{old.created_at.month:02d}"
+
+        self.assertIn(recent_key, timeline)
         self.assertIn(
-            f"{recent.created_at.year:04d}-{recent.created_at.month:02d}",
-            months,
+            old_key,
+            timeline,
+            "a month with data in it must appear however old it is",
         )
-        self.assertNotIn(
-            f"{old.created_at.year:04d}-{old.created_at.month:02d}",
-            months,
-            "a month outside the window must not be read at all",
-        )
+
+        # And each carries the count its rows imply, which is what the
+        # aggregation is for.
+        self.assertEqual(timeline[recent_key]["meetings"], 1)
+        self.assertEqual(timeline[old_key]["meetings"], 1)
+        self.assertEqual(timeline[recent_key]["events"], 1)
+        self.assertEqual(timeline[old_key]["events"], 1)
 
 
 class TelemetryTests(unittest.TestCase):

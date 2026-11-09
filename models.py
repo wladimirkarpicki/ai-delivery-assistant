@@ -1,4 +1,4 @@
-﻿"""
+"""
 SQLAlchemy 2.0 declarative models (plain SQLAlchemy; no Flask anywhere).
 
 The Mapped[...] annotations are what let a type checker see real types on
@@ -179,3 +179,25 @@ class User(db.Model):  # type: ignore[name-defined]  # db.Model is the declarati
     username: Mapped[str] = db.mapped_column(String(80), unique=True)
     password_hash: Mapped[str] = db.mapped_column(String(255))
     role: Mapped[str] = db.mapped_column(String(20), default="user")
+
+
+class RevokedToken(db.Model):  # type: ignore[name-defined]  # db.Model is the declarative Base behind the _DB shim
+    """
+    A logged-out token id, and the moment it stops mattering.
+
+    Logout used to record the id in a set in the process, which meant a
+    revoked token became valid again after a restart until its own
+    expiry. Persisting it makes revocation survive a restart, and the
+    expiry column lets the check discard rows whose token has lapsed
+    anyway instead of accumulating forever.
+
+    The id is the primary key so a check is a single index lookup. There
+    is deliberately no foreign key to users: a revoked token has to
+    outlive the account it belonged to, or deleting a user revives every
+    token that user was ever issued.
+    """
+
+    __tablename__ = "revoked_tokens"
+
+    jti: Mapped[str] = db.mapped_column(String(64), primary_key=True)
+    expires_at: Mapped[datetime] = db.mapped_column(db.DateTime(timezone=True))

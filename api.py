@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 # Imported directly rather than through the db namespace: the staticmethod
 # re-export loses select()'s overloads, so mypy then reads a multi-column
 # select as a single-argument call.
-from sqlalchemy import func, select
+from sqlalchemy import extract, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -73,6 +73,7 @@ from models import (
     Project,
     ProjectState,
     ReviewResolution,
+    RevokedToken,
     Risk,
     User,
 )
@@ -437,6 +438,29 @@ def embed_finding_titles(router, analysis):
     return dict(zip(titles, vectors))
 
 
+def _prune_revoked_rows() -> int:
+    """
+    Drop revoked-token rows whose token has expired.
+
+    Called on logout rather than on a request path: it is not on the hot
+    path, and a table holding rows whose token no longer matters is
+    clutter rather than a security issue. Returns the number removed so a
+    caller can log it.
+    """
+
+    try:
+        removed = (
+            db.session.query(RevokedToken)
+            .filter(RevokedToken.expires_at < datetime.now(UTC))
+            .delete(synchronize_session=False)
+        )
+        db.session.commit()
+        return int(removed or 0)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return 0
+
+
 def history_changes(event):
     """
     Extract scalar field changes (field, old, new) from an event's
@@ -743,9 +767,16 @@ def create_app(router_instance=None, database_url=None):
 
     # Ids of tokens that have been signed out. A stateless JWT cannot be
     # un-issued, so without this the same token stays valid in any other
-    # browser or device until it expires. In-memory on purpose: it is
-    # per-process, which means a restart re-enables nothing longer-lived
-    # than a token's own ttl, and the set never holds whole sessions.
+    # browser or device until it expires. Only ids are compared, so this
+    # holds ids rather than whole sessions.
+    #
+    # This set is a cache, not the record. The record is the
+    # revoked_tokens table: an in-memory set alone meant a logout stopped
+    # taking effect after a restart, and the token lived for up to
+    # TOKEN_TTL_HOURS after that. Writing on logout and reading through to
+    # the table on a miss is what makes revocation survive a restart, and
+    # the set still saves a query on the hot path for a process that has
+    # already revoked the token.
     _revoked_ids: set[str] = set()
 
     def _is_revoked(token_value: str) -> bool:
@@ -757,9 +788,6 @@ def create_app(router_instance=None, database_url=None):
         valid anywhere else until it expires. Only ids are compared, so
         memory holds ids rather than whole sessions.
         """
-        if not _revoked_ids:
-            return False
-
         try:
             payload = jwt.decode(
                 token_value,
@@ -771,7 +799,41 @@ def create_app(router_instance=None, database_url=None):
         except (jwt.PyJWTError, TypeError, ValueError):
             return False
 
-        return bool(jti) and jti in _revoked_ids
+        if not jti:
+            return False
+
+        if jti in _revoked_ids:
+            return True
+
+        # A miss in the cache is answered from the table, which is where
+        # the answer survives a restart. The id is the primary key, so
+        # this is one index lookup, on the same query path the user
+        # lookup already takes.
+        row = db.session.get(RevokedToken, jti)
+
+        if row is None:
+            return False
+
+        _revoked_ids.add(jti)
+        return True
+
+    def _expiry_from_payload(payload) -> datetime:
+        """
+        The token's own expiry, as a UTC datetime.
+
+        Stored with the revocation so a row can be dropped once its token
+        has lapsed anyway. A payload with no exp falls back to now, which
+        makes the row immediately prunable rather than permanent: the
+        token carries no expiry to wait out, so there is nothing to
+        protect by keeping it.
+        """
+
+        exp = payload.get("exp") if isinstance(payload, dict) else None
+
+        if not isinstance(exp, (int, float)):
+            return datetime.now(UTC)
+
+        return datetime.fromtimestamp(exp, tz=UTC)
 
     def _is_https(request: Request) -> bool:
         """
@@ -955,13 +1017,46 @@ def create_app(router_instance=None, database_url=None):
                 )
                 jti = payload.get("jti")
                 if jti:
+                    # Written to the table as well as the cache, so the
+                    # revocation survives a restart. The row carries the
+                    # token's own expiry: until then it is the record, and
+                    # after it is dead weight, which _prune_revoked_rows
+                    # clears.
+                    if db.session.get(RevokedToken, jti) is None:
+                        db.session.add(
+                            RevokedToken(
+                                jti=jti,
+                                expires_at=_expiry_from_payload(payload),
+                            )
+                        )
+                    db.session.commit()
                     _revoked_ids.add(jti)
             except (jwt.PyJWTError, TypeError, ValueError):
                 # An unreadable token is already refused; nothing to revoke.
                 pass
+            except SQLAlchemyError:
+                # The cookie is still cleared and the cache still holds
+                # the id, so this browser and this process lose access
+                # either way. A failed write means only that the
+                # revocation would not survive a restart, and the caller
+                # is signed out regardless.
+                db.session.rollback()
+                logging.getLogger("ai-delivery-assistant.auth").warning(
+                    "could not persist a token revocation; it applies to this process only",
+                    exc_info=True,
+                )
 
         response = JSONResponse({"signed_out": True})
         clear_auth_cookie(response)
+
+        # Drop rows whose token already lapsed. Not on a request path, so
+        # a logout absorbs the cost of keeping the table bounded.
+        pruned = _prune_revoked_rows()
+        if pruned:
+            logging.getLogger("ai-delivery-assistant.auth").debug(
+                "pruned %d expired revoked-token row(s)", pruned
+            )
+
         return response
 
     @app.get("/api/auth/me")
@@ -1389,33 +1484,42 @@ def create_app(router_instance=None, database_url=None):
             )
         ]
 
-        # The activity timeline renders a bounded window of months, so the
-        # rows it needs are bounded too. Without the window this loads
-        # every Meeting and HistoryEvent row into Python on each request,
-        # and HistoryEvent grows with every event of every item of every
-        # meeting, so the cost rises for the life of the database.
+        # The timeline is aggregated by the database, not in Python.
         #
-        # The bound is a datetime comparison, not a dialect-specific date
-        # function: the tests run on SQLite and production on PostgreSQL,
-        # and strftime and date_trunc each exist in only one of them.
-        ACTIVITY_WINDOW_MONTHS = 24
-
+        # The previous version read every created_at into Python and
+        # counted there, which is O(rows) per request on a table where
+        # HistoryEvent grows with every event of every item of every
+        # meeting. A first attempt fixed that by bounding the window to 24
+        # months, but that hid data: a month older than the window was
+        # absent from the timeline, and the gap looked identical to a
+        # month with nothing in it.
+        #
+        # GROUP BY is the fix that does not choose a cutoff. It returns one
+        # row per distinct month, so the work is proportional to how long
+        # history has been kept rather than to how many rows it holds, and
+        # every month that exists is in the result.
+        #
+        # extract() rather than strftime or date_trunc: those are SQLite
+        # and PostgreSQL only, and the tests run on SQLite while
+        # production runs PostgreSQL. SQLAlchemy compiles extract for both.
         def month_counts(model):
-            counts: dict[tuple[int, int], int] = {}
-            cutoff = datetime.now(UTC) - timedelta(
-                days=ACTIVITY_WINDOW_MONTHS * 30
-            )
+            rows = db.session.execute(
+                select(
+                    extract("year", model.created_at),
+                    extract("month", model.created_at),
+                    func.count(),
+                )
+                .where(model.created_at.isnot(None))
+                .group_by(
+                    extract("year", model.created_at),
+                    extract("month", model.created_at),
+                )
+            ).all()
 
-            for (created_at,) in db.session.execute(
-                select(model.created_at).where(model.created_at >= cutoff)
-            ).all():
-                if created_at is None:
-                    continue
-
-                key = (created_at.year, created_at.month)
-                counts[key] = counts.get(key, 0) + 1
-
-            return counts
+            return {
+                (int(year), int(month)): count
+                for year, month, count in rows
+            }
 
         meeting_months = month_counts(Meeting)
         event_months = month_counts(HistoryEvent)
