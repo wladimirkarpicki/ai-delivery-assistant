@@ -54,6 +54,42 @@ when their own value is lower.
 | Asset split of the frontend bundle | Load time | The frontend audit's measured composition |
 | Frontend test setup | Regression safety | The frontend audit's proposal |
 
+## Landed this round, each verified
+
+| Commit | What was proven |
+|---|---|
+| `0ad8e32` | `add_meeting` no longer blocks the event loop; provider failures caught instead of 500 |
+| `8d385b9` | 7 unreachable definitions removed, 45 lines |
+| `c9aaf97` | Initial bundle 703,743 to 263,184 bytes measured, -62.6 % |
+| `b2fa8f5` | NOT NULL and varchar(n) both verified enforced on the live PostgreSQL; `projects.name` and `meetings.source_filename` clamped |
+| `bfc01bc` | Flash notices announced with `role=alert`; skip link added; typecheck and build exit 0 |
+
+## Found and fixed during verification: credential drift between the env and the volume
+
+The stack was healthy and `/api/health` answered 200, but every login
+returned 500. The cause was not code:
+
+`POSTGRES_PASSWORD` only takes effect when the data directory is empty.
+The volume had already been initialised, so the environment variable was
+cosmetic and the real password was whatever the first init used. The app
+container was configured with the env value and could not authenticate.
+
+The failure is worth recording because it is invisible to the usual
+checks. `pg_hba.conf` in the postgres image grants `trust` on the unix
+socket and on `127.0.0.1`, so connecting *from inside the database
+container* succeeds with any password, including a wrong one. Two
+verification runs reported success that way before the app container,
+which connects over the Docker bridge and hits `scram-sha-256`, showed the
+real state.
+
+The fix was `ALTER USER postgres WITH PASSWORD` to the value the app
+expects, after which the full path succeeded: login 200 with a cookie,
+project create 201, meeting submit 201, and `/metrics` reporting the rows
+written.
+
+The standing lesson: verify a database change by connecting the way the
+application does, never from inside the database container.
+
 ## Explicit non-goals
 
 - No dependency-injection framework, no plugin system, no event bus. The
