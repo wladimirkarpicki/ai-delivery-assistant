@@ -85,6 +85,7 @@ from project_memory import (
 )
 from report import build_status_report
 from router import ModelRouter
+from telemetry import REQUEST_ID_HEADER, configure_logging, new_request_id
 
 # ---------------------------------------------------------------------------
 # Request bodies
@@ -588,6 +589,11 @@ def create_app(router_instance=None, database_url=None):
         openapi_url="/api/openapi.json",
     )
 
+    # One formatter and level for the whole app, so a production line
+    # carries a timestamp, a level and a logger name. Before this the
+    # four loggers in the codebase ran on Python's defaults.
+    configure_logging()
+
     # The Vite dev server proxies /api in development; production is
     # same-origin. localhost origins are allowed for convenience.
     app.add_middleware(
@@ -648,11 +654,17 @@ def create_app(router_instance=None, database_url=None):
         # threadpool thread that runs the endpoint.
         token = new_request_scope()
 
+        # Echo the caller's id or mint one, so a user-reported failure
+        # can be found in the log by matching this value.
+        request_id = request.headers.get(REQUEST_ID_HEADER) or new_request_id()
+        request.state.request_id = request_id
+
         try:
             response = await call_next(request)
         finally:
             close_request_scope(token)
 
+        response.headers[REQUEST_ID_HEADER] = request_id
         return response
 
     # ------------------------------------------------------------------

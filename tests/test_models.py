@@ -755,6 +755,40 @@ class ActivityWindowTests(unittest.TestCase):
         )
 
 
+class TelemetryTests(unittest.TestCase):
+    """
+    A failure reported by a user has to be findable in the log. Without a
+    request id, four identical requests produce four identical lines and
+    the one that failed cannot be picked out.
+    """
+
+    def setUp(self):
+        config_loader.reset_bootstrap_token()
+        api_module._failed_logins.clear()
+        self.app = api_module.create_app(_FixedRouter(), "sqlite://")
+        db.create_all()
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        config_loader.reset_bootstrap_token()
+
+    def test_response_carries_a_request_id(self):
+        response = self.client.get("/api/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("x-request-id", {k.lower() for k in response.headers})
+
+    def test_caller_supplied_id_is_echoed(self):
+        response = self.client.get("/api/health", headers={"X-Request-ID": "abc123def456"})
+        self.assertEqual(response.headers.get("x-request-id"), "abc123def456")
+
+    def test_distinct_requests_get_distinct_ids(self):
+        a = self.client.get("/api/health").headers.get("x-request-id")
+        b = self.client.get("/api/health").headers.get("x-request-id")
+        self.assertNotEqual(a, b, "each request must be distinguishable in the log")
+
+
 class _RecordingRouter:
     """Captures the two roles instead of calling a provider."""
 
