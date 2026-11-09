@@ -99,6 +99,12 @@ export default function AppShell() {
 
   return (
     <>
+      {/* Without a skip link the first Tab press goes into the header nav,
+          so a keyboard user crosses every navigation link before reaching
+          the page content. It is hidden until focused and then visible. */}
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       <header className="app-header">
         <div className="app-header__inner">
           <nav className="app-header__nav" aria-label="Primary">
@@ -200,12 +206,24 @@ export default function AppShell() {
         </div>
       </header>
 
-      <main className="container">
-        {flashes.map((flash, index) => (
-          <div key={index} className={`notice ${flash.category}`}>
-            {flash.message}
-          </div>
-        ))}
+      <main className="container" id="main-content">
+        {/* A flash notice is the only place an error reaches the user
+            (a failed submit, a rejected upload, a forbidden action), and
+            a plain div is silent to a screen reader, so the user learns
+            the action failed only by looking. role=alert announces it,
+            and the explicit "error" category makes the meaning audible
+            rather than carried by colour alone. */}
+        <div role="region" aria-live="polite" aria-label="Notifications">
+          {flashes.map((flash, index) => (
+            <div
+              key={index}
+              role={flash.category === "error" ? "alert" : "status"}
+              className={`notice ${flash.category}`}
+            >
+              {flash.message}
+            </div>
+          ))}
+        </div>
 
         <Outlet />
       </main>
