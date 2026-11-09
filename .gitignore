@@ -33,3 +33,8 @@ coverage.xml
 .ruff_cache/
 htmlcov/
 coverage.json
+
+# Test scratch databases. The revocation tests use a file-backed SQLite
+# database so a relaunched app reads the same rows, which is what makes them
+# test a restart rather than a reset; a failing run leaves them behind.
+tmp*.db
