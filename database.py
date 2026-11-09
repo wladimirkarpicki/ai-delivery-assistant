@@ -138,11 +138,6 @@ def drop_all():
     Base.metadata.drop_all(engine)
 
 
-def session_remove():
-    """Drop the current thread's session (request teardown analogue)."""
-    _Session.remove()
-
-
 def new_request_scope():
     """Mark the start of an HTTP request: fresh session scope."""
     return _session_scope.set("request-" + uuid.uuid4().hex)

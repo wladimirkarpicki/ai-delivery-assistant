@@ -460,14 +460,6 @@ def serialize_action(action):
     }
 
 
-def serialize_decision(decision):
-    return {
-        "id": decision.id,
-        "title": decision.title,
-        "details": decision.details,
-    }
-
-
 def serialize_meeting(meeting, detail=False):
     data = {
         "id": meeting.id,
@@ -565,15 +557,6 @@ class _SyncUpload:
 
     def getvalue(self) -> bytes:
         return self._buffer.getvalue()
-
-    def close(self):
-        return self._buffer.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()
 
 
 # ---------------------------------------------------------------------------
