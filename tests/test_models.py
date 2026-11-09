@@ -658,6 +658,120 @@ class AuthCookieTests(unittest.TestCase):
             self.assertEqual(after.get("/api/auth/me").status_code, 401)
 
 
+class ExceptionExposureTests(unittest.TestCase):
+    """
+    A provider or database failure must not reach the caller.
+
+    GitHub flags "Information exposure through an exception" where an
+    exception's text is returned, and the reason is real: a provider
+    failure carries the endpoint and status, a database failure carries
+    the statement. Neither tells the caller anything useful, and both
+    describe the infrastructure.
+
+    The counterweight is that validation messages must still get through,
+    or the UI can only report "something went wrong" when the user simply
+    forgot to attach a file. Both halves are pinned here.
+    """
+
+    def setUp(self):
+        config_loader.reset_bootstrap_token()
+        api_module._failed_logins.clear()
+        self.app = api_module.create_app(None, "sqlite://")
+        db.create_all()
+        self.client = TestClient(self.app)
+        self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "founder",
+                "password": "founder-pass-123",
+                "bootstrap_token": BOOTSTRAP_TOKEN,
+            },
+        )
+        self.token = self.client.post(
+            "/api/auth/login",
+            json={"username": "founder", "password": "founder-pass-123"},
+        ).json()["access_token"]
+        self.client.headers["Authorization"] = f"Bearer {self.token}"
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        config_loader.reset_bootstrap_token()
+
+    def test_validation_message_reaches_the_user(self):
+        project = self.client.post(
+            "/api/projects", json={"name": "Exposure", "description": ""}
+        ).json()["id"]
+
+        response = self.client.post(f"/api/projects/{project}/meetings", data={})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Upload meeting notes or paste meeting text.", response.text)
+
+    def test_internal_failure_returns_a_fixed_message(self):
+        import httpx
+
+        project = self.client.post(
+            "/api/projects", json={"name": "Leak Check", "description": ""}
+        ).json()["id"]
+
+        # A provider failure raises an httpx error, not a ValueError. The
+        # response must be a fixed sentence with no trace of the cause.
+        def boom(*args, **kwargs):
+            raise httpx.HTTPStatusError(
+                "upstream returned 429 with an internal path /internal/v1",
+                request=httpx.Request("POST", "https://example.invalid/internal"),
+                response=httpx.Response(429),
+            )
+
+        with mock.patch.object(api_module.ModelRouter, "generate", boom):
+            response = self.client.post(
+                f"/api/projects/{project}/meetings",
+                data={"meeting_notes": "Alice: QA is short one tester."},
+            )
+
+        text = response.text
+        self.assertEqual(response.status_code, 400)
+        # The failure happens during analysis, before consolidation, so the
+        # outer handler answers with its own fixed sentence.
+        self.assertIn("could not be processed", text)
+        self.assertIn("nothing was changed", text)
+        for leak in ("429", "example.invalid", "/internal", "Traceback"):
+            self.assertNotIn(leak, text, f"response leaked {leak!r}")
+
+    def test_unexpected_exception_does_not_leak_stack_text(self):
+        project = self.client.post(
+            "/api/projects", json={"name": "Stack Check", "description": ""}
+        ).json()["id"]
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("database password is hunter2 at /var/secret")
+
+        with mock.patch.object(api_module.ModelRouter, "generate", boom):
+            response = self.client.post(
+                f"/api/projects/{project}/meetings",
+                data={"meeting_notes": "Alice: QA is short one tester."},
+            )
+
+        text = response.text
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("hunter2", text)
+        self.assertNotIn("/var/secret", text)
+        self.assertNotIn("Traceback", text)
+
+    def test_review_validation_message_reaches_the_user(self):
+        project = self.client.post(
+            "/api/projects", json={"name": "Review Check", "description": ""}
+        ).json()["id"]
+
+        # A review event that does not exist is a 404, which is authored.
+        response = self.client.post(
+            f"/api/projects/{project}/review/999/resolve",
+            json={"action": "bogus"},
+        )
+        self.assertEqual(response.status_code, 404)
+
+
 class ActivityWindowTests(unittest.TestCase):
     """
     The activity timeline must read a bounded window, not the whole table.

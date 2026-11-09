@@ -1,4 +1,4 @@
-﻿# Contributing to AI Delivery Assistant
+# Contributing to AI Delivery Assistant
 
 Thanks for helping improve this project. This document describes a local development setup, the commands used day to day, and the workflow for database migrations.
 

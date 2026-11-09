@@ -90,6 +90,47 @@ from router import ModelRouter
 from telemetry import REQUEST_ID_HEADER, configure_logging, new_request_id
 
 # ---------------------------------------------------------------------------
+# Fixed operator-facing messages
+
+# Exceptions are logged, never echoed. A provider failure carries the
+# endpoint and status, and a database failure carries the statement, and
+# neither is something an anonymous caller should read. The caller gets
+# one of these instead; the log holds the cause with a request id.
+MODEL_LIST_UNAVAILABLE_MESSAGE = (
+    "The analysis service is temporarily unavailable. "
+    "Please try again shortly."
+)
+
+MEETING_SUBMIT_FAILED_MESSAGE = (
+    "This meeting could not be processed. "
+    "The meeting was not saved, so nothing was changed."
+)
+
+REVIEW_ACTION_FAILED_MESSAGE = (
+    "This review action could not be completed. Nothing was changed."
+)
+
+
+class UserFacingError(ValueError):
+    """
+    An error whose message was written for the person who triggered it.
+
+    The distinction matters because the handlers cannot return arbitrary
+    exception text: a provider failure carries the endpoint and status,
+    and a database failure carries the statement, and neither belongs in
+    a response. Validation failures have to reach the user though, or the
+    UI can only say "something went wrong" when the user simply forgot to
+    attach a file.
+
+    So validation raises this subclass, and only this subclass is echoed.
+    Everything else is logged and replaced with a fixed message. Because
+    this is a ValueError, any handler already catching ValueError keeps
+    working, which is what let the class be introduced without touching
+    the exception tuples.
+    """
+
+
+# ---------------------------------------------------------------------------
 # Request bodies
 
 
@@ -1517,7 +1558,17 @@ def create_app(router_instance=None, database_url=None):
             # tenacity retries with reraise=True, so a 429 or a timeout
             # surfaces the original HTTPStatusError/TimeoutException. Without
             # those classes in the tuple this returned a bare 500.
-            return error_response(str(exception))
+            #
+            # The exception text is logged and never returned: it carries
+            # the provider's URL and status, which tells an anonymous
+            # caller something about the infrastructure. The caller gets a
+            # fixed sentence instead, and the operator gets the cause.
+            logging.getLogger("ai-delivery-assistant.meetings").warning(
+                "model list unavailable for a meeting submission: %s: %s",
+                type(exception).__name__,
+                exception,
+            )
+            return error_response(MODEL_LIST_UNAVAILABLE_MESSAGE)
 
         selected_model = DEFAULT_MODEL if DEFAULT_MODEL in models else None
 
@@ -1545,7 +1596,7 @@ def create_app(router_instance=None, database_url=None):
             elif meeting_notes.strip():
                 original_text, source_filename = meeting_notes.strip(), None
             else:
-                raise ValueError("Upload meeting notes or paste meeting text.")
+                raise UserFacingError("Upload meeting notes or paste meeting text.")
 
             # Idempotency: re-submitting identical notes is a
             # no-op rather than a second memory mutation.
@@ -1555,7 +1606,7 @@ def create_app(router_instance=None, database_url=None):
             ).first()
 
             if duplicate_meeting is not None:
-                raise ValueError(
+                raise UserFacingError(
                     f"Identical meeting notes already exist "
                     f"({duplicate_meeting.title}, "
                     f"{duplicate_meeting.created_at:%Y-%m-%d}). "
@@ -1662,7 +1713,21 @@ def create_app(router_instance=None, database_url=None):
             # httpx classes cover a provider failure that escapes the
             # inner handler.
             db.session.rollback()
-            return error_response(str(exception))
+
+            # The two raises inside this block carry messages written for
+            # the user, so they are returned. Everything else is either a
+            # provider failure or an internal error whose text says where
+            # the stack lives, and that goes to the log only.
+            if isinstance(exception, UserFacingError):
+                return error_response(str(exception))
+
+            logging.getLogger("ai-delivery-assistant.meetings").warning(
+                "meeting submission failed: %s: %s",
+                type(exception).__name__,
+                exception,
+                exc_info=True,
+            )
+            return error_response(MEETING_SUBMIT_FAILED_MESSAGE)
 
     @app.get("/api/meetings/{meeting_id}")
     def meeting_detail(meeting_id: int, user: dict = Depends(get_current_user)):
@@ -1823,7 +1888,7 @@ def create_app(router_instance=None, database_url=None):
                 model_class = review_model_class(event.entity_type)
 
                 if model_class is None:
-                    raise ValueError("Unknown entity type.")
+                    raise UserFacingError("Unknown entity type.")
 
                 raw_target = body.target_item_id
 
@@ -1832,7 +1897,7 @@ def create_app(router_instance=None, database_url=None):
                     target = db.session.get(model_class, int(raw_target))
 
                 if target is None or target.project_id != project.id:
-                    raise ValueError(
+                    raise UserFacingError(
                         "Pick an item from this project to link to."
                     )
 
@@ -1848,10 +1913,25 @@ def create_app(router_instance=None, database_url=None):
             elif action == "dismiss":
                 resolution_action = "acknowledged"
             else:
-                raise ValueError("Unknown review action.")
-        except ValueError as exception:
+                raise UserFacingError("Unknown review action.")
+        except UserFacingError as exception:
+            # Only the authored validation message is echoed. The other
+            # exceptions this block can raise come from the consolidation
+            # and merge helpers, and their text describes an internal
+            # failure, so it goes to the log and the caller gets a fixed
+            # sentence.
             db.session.rollback()
             return error_response(str(exception))
+        except Exception as exception:
+            db.session.rollback()
+            logging.getLogger("ai-delivery-assistant.review").warning(
+                "review action %r failed: %s: %s",
+                action,
+                type(exception).__name__,
+                exception,
+                exc_info=True,
+            )
+            return error_response(REVIEW_ACTION_FAILED_MESSAGE)
 
         note = (body.note or "").strip()
 
