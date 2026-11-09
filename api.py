@@ -77,6 +77,7 @@ from models import (
     User,
 )
 from project_memory import (
+    _bounded,
     apply_consolidation_plan,
     apply_meeting_analysis,
     apply_review_create,
@@ -1431,7 +1432,10 @@ def create_app(router_instance=None, database_url=None):
 
     @app.post("/api/projects", status_code=201)
     def projects_create(body: ProjectCreate, user: dict = Depends(get_current_user)):
-        name = (body.name or "").strip()
+        # Clamped, not merely stripped: projects.name is varchar(200) and
+        # PostgreSQL rejects an over-long value with a 500, which SQLite
+        # would have accepted silently.
+        name = _bounded((body.name or "").strip(), "name")
         description = (body.description or "").strip()
 
         if not name:
@@ -1535,7 +1539,9 @@ def create_app(router_instance=None, database_url=None):
                 # endpoint FastAPI runs it in the threadpool instead.
                 upload_bytes = meeting_file.file.read()
                 original_text = extract_text(_SyncUpload(meeting_file.filename, upload_bytes))
-                source_filename = meeting_file.filename
+                # The client controls this string, and source_filename is
+                # varchar(255), so a long name would fail on PostgreSQL.
+                source_filename = _bounded(meeting_file.filename, "source_filename")
             elif meeting_notes.strip():
                 original_text, source_filename = meeting_notes.strip(), None
             else:

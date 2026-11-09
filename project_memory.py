@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 from datetime import date
 
 from database import db
@@ -30,6 +30,12 @@ COLUMN_LIMITS = {
     "action": 30,
     "event_type": 40,
     "entity_type": 40,
+    # The two columns an operator controls directly rather than through
+    # the LLM: the project name on create, and the uploaded file's name.
+    # Both reach the database without going through _value, so they were
+    # unclamped while every LLM-sourced column was covered.
+    "name": 200,
+    "source_filename": 255,
 }
 
 
