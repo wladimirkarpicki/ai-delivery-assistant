@@ -25,6 +25,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import jwt
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -1513,7 +1514,7 @@ def create_app(router_instance=None, database_url=None):
         }
 
     @app.post("/api/projects/{project_id}/meetings", status_code=201)
-    async def add_meeting(
+    def add_meeting(
         project_id: int,
         title: str = Form(""),
         meeting_notes: str = Form(""),
@@ -1524,7 +1525,11 @@ def create_app(router_instance=None, database_url=None):
 
         try:
             models = get_available_models(router)
-        except (ValueError, RuntimeError) as exception:
+        except (ValueError, RuntimeError, httpx.HTTPError, httpx.TransportError) as exception:
+            # Provider failures arrive as httpx errors, not as ValueError:
+            # tenacity retries with reraise=True, so a 429 or a timeout
+            # surfaces the original HTTPStatusError/TimeoutException. Without
+            # those classes in the tuple this returned a bare 500.
             return error_response(str(exception))
 
         selected_model = DEFAULT_MODEL if DEFAULT_MODEL in models else None
@@ -1539,7 +1544,13 @@ def create_app(router_instance=None, database_url=None):
                 # document_parser.extract_text speaks the Flask
                 # FileStorage protocol (sync .read(), .filename); wrap
                 # the already-loaded upload bytes in that shape.
-                upload_bytes = await meeting_file.read()
+                #
+                # This endpoint is sync on purpose: the pipeline below
+                # makes blocking LLM calls with a 180 s timeout each, and
+                # an async def would run it on the event loop, stalling
+                # every other request including /api/health. As a sync
+                # endpoint FastAPI runs it in the threadpool instead.
+                upload_bytes = meeting_file.file.read()
                 original_text = extract_text(_SyncUpload(meeting_file.filename, upload_bytes))
                 source_filename = meeting_file.filename
             elif meeting_notes.strip():
@@ -1615,8 +1626,19 @@ def create_app(router_instance=None, database_url=None):
                     meeting,
                     combine_plans(pre_matched["auto"], consolidation_plan),
                 )
-            except (ValueError, RuntimeError, KeyError, TypeError) as consolidation_error:
-                # Fallback to traditional analysis if consolidation fails
+            except (
+                ValueError,
+                RuntimeError,
+                KeyError,
+                TypeError,
+                httpx.HTTPError,
+                httpx.TransportError,
+            ) as consolidation_error:
+                # Fallback to traditional analysis if consolidation fails.
+                # The httpx classes matter: without them a provider failure
+                # during consolidation escapes this handler entirely and the
+                # endpoint returns 500 instead of degrading to the
+                # deterministic path, which is what this branch documents.
                 warning = (
                     "Note: Consolidation encountered an issue "
                     f"({consolidation_error!s}), using standard analysis."
@@ -1636,12 +1658,20 @@ def create_app(router_instance=None, database_url=None):
                 response["warning"] = warning  # type: ignore[assignment]
 
             return response
-        except (ValueError, RuntimeError, SQLAlchemyError) as exception:
+        except (
+            ValueError,
+            RuntimeError,
+            SQLAlchemyError,
+            httpx.HTTPError,
+            httpx.TransportError,
+        ) as exception:
             # SQLAlchemyError is in the tuple on purpose. SQLite does not
             # enforce varchar(n), so a too-long value from an LLM (or a
             # long upload filename) is only caught on a real PostgreSQL,
             # where it raises DataError. Without this, that surface is a
-            # 500 instead of a 400, and the session is left dirty.
+            # 500 instead of a 400, and the session is left dirty. The
+            # httpx classes cover a provider failure that escapes the
+            # inner handler.
             db.session.rollback()
             return error_response(str(exception))
 
