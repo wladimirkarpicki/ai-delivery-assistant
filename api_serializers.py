@@ -13,6 +13,26 @@ other is the one place an error body is produced.
 """
 
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+# ---------------------------------------------------------------------------
+# Request bodies
+
+# These live beside the serializers because they are the other half of the
+# same contract: what comes in and what goes out. They used to sit in
+# api.py, and a router that needed one had to import api.py, which is a
+# cycle, since api.py includes the routers.
+
+
+class ManualResolve(BaseModel):
+    action: str = "resolve"
+    note: str = ""
+
+
+class ReviewResolve(BaseModel):
+    action: str = ""
+    target_item_id: int | None = None
+    note: str = ""
 
 
 def history_changes(event):

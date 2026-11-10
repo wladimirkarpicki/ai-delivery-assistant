@@ -21,7 +21,7 @@ import logging
 import os
 import secrets
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -48,7 +48,6 @@ from api_analytics import router as analytics_router
 from api_auth import (
     CredentialsIn,
     SetupIn,
-    UserFacingError,
     clear_auth_cookie,
     create_token,
     get_current_user,
@@ -63,13 +62,13 @@ from api_deps import _get_project, install_deps
 from api_memory import (
     get_available_models,
 )
+from api_routers_items import router as items_router
 from api_routers_meetings import router as meetings_router
 
 # Serializers, moved out whole. They are pure functions over rows, so they
 # moved with no other change, and the route handlers below reach them
 # through this import rather than a copy that could drift.
 from api_serializers import (
-    REVIEW_ACTION_FAILED_MESSAGE,
     error_response,
     serialize_action,
     serialize_blocker,
@@ -96,15 +95,11 @@ from models import (
     HistoryEvent,
     Meeting,
     Project,
-    ReviewResolution,
     Risk,
     User,
 )
 from project_memory import (
     _bounded,
-    apply_review_create,
-    apply_review_merge,
-    review_model_class,
 )
 from report import build_status_report
 from router import ModelRouter
@@ -122,17 +117,6 @@ def _dt(value):
 class ProjectCreate(BaseModel):
     name: str = ""
     description: str = ""
-
-
-class ManualResolve(BaseModel):
-    action: str = "resolve"
-    note: str = ""
-
-
-class ReviewResolve(BaseModel):
-    action: str = ""
-    target_item_id: int | None = None
-    note: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -752,255 +736,6 @@ def create_app(router_instance=None, database_url=None):
 
         return {"project": serialize_project_summary(project), "report": report}
 
-    def open_review_events(project):
-        return (
-            HistoryEvent.query.filter_by(
-                project_id=project.id,
-                event_type="needs_review",
-            )
-            .filter(~HistoryEvent.review_resolution.has())
-            .order_by(HistoryEvent.id.desc())
-            .all()
-        )
-
-    @app.get("/api/projects/{project_id}/review")
-    def review_queue(project_id: int, user: dict = Depends(get_current_user)):
-        project = _get_project(project_id)
-
-        queue = []
-
-        for event in open_review_events(project):
-            plan_item = (event.after_data or {}).get("plan_item") or {}
-            new_item = plan_item.get("new_item") or {}
-            model_class = review_model_class(event.entity_type)
-            targets = []
-
-            if model_class is not None:
-                targets = [
-                    {"id": item.id, "title": item.title}
-                    for item in model_class.query.filter_by(project_id=project.id)
-                    .order_by(model_class.title)
-                    .all()
-                ]
-
-            queue.append({
-                "event": serialize_event(event),
-                "plan_item": plan_item,
-                "new_item": new_item,
-                "targets": targets,
-            })
-
-        return {
-            "project": serialize_project_summary(project),
-            "queue": queue,
-        }
-
-    @app.post("/api/projects/{project_id}/review/{event_id}/resolve")
-    def resolve_review_event(
-        project_id: int,
-        event_id: int,
-        body: ReviewResolve,
-        user: dict = Depends(get_current_user),
-    ):
-        project = _get_project(project_id)
-
-        event = HistoryEvent.query.filter_by(
-            id=event_id,
-            project_id=project.id,
-            event_type="needs_review",
-        ).first()
-
-        if event is None:
-            raise HTTPException(status_code=404, detail="Review event not found")
-
-        if event.review_resolution is not None:
-            return error_response("This review item was already resolved.")
-
-        meeting = db.session.get(Meeting, event.meeting_id)
-
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="Meeting not found")
-
-        plan_item = (event.after_data or {}).get("plan_item") or {}
-        action = (body.action or "").strip()
-        resolution_action = None
-        target_item_id = None
-
-        try:
-            if action == "create":
-                record = apply_review_create(
-                    project,
-                    meeting,
-                    event.entity_type,
-                    plan_item,
-                )
-                resolution_action = "applied_create"
-                target_item_id = record.id
-            elif action == "link":
-                model_class = review_model_class(event.entity_type)
-
-                if model_class is None:
-                    raise UserFacingError("Unknown entity type.")
-
-                raw_target = body.target_item_id
-
-                target = None
-                if raw_target is not None:
-                    target = db.session.get(model_class, int(raw_target))
-
-                if target is None or target.project_id != project.id:
-                    raise UserFacingError(
-                        "Pick an item from this project to link to."
-                    )
-
-                apply_review_merge(
-                    project,
-                    meeting,
-                    event.entity_type,
-                    plan_item,
-                    target,
-                )
-                resolution_action = "applied_merge"
-                target_item_id = target.id
-            elif action == "dismiss":
-                resolution_action = "acknowledged"
-            else:
-                raise UserFacingError("Unknown review action.")
-        except UserFacingError as exception:
-            # Only the authored validation message is echoed. The other
-            # exceptions this block can raise come from the consolidation
-            # and merge helpers, and their text describes an internal
-            # failure, so it goes to the log and the caller gets a fixed
-            # sentence.
-            db.session.rollback()
-            return error_response(str(exception))
-        except Exception as exception:
-            db.session.rollback()
-            logging.getLogger("ai-delivery-assistant.review").warning(
-                "review action %r failed: %s: %s",
-                action,
-                type(exception).__name__,
-                exception,
-                exc_info=True,
-            )
-            return error_response(REVIEW_ACTION_FAILED_MESSAGE)
-
-        note = (body.note or "").strip()
-
-        db.session.add(
-            ReviewResolution(
-                history_event_id=event.id,
-                action=resolution_action,
-                target_item_id=target_item_id,
-                note=note,
-            )
-        )
-        db.session.commit()
-
-        return {"ok": True, "action": resolution_action, "target_item_id": target_item_id}
-
-    @app.post("/api/projects/{project_id}/items/{item_type}/{item_id}/resolve")
-    def manual_item_resolve(
-        project_id: int,
-        item_type: str,
-        item_id: int,
-        body: ManualResolve,
-        user: dict = Depends(get_current_user),
-    ):
-        project = _get_project(project_id)
-
-        action = (body.action or "resolve").strip().lower()
-        note = (body.note or "").strip()
-
-        entity_map = {
-            "risk": ("risk", Risk, "resolved", "resolved_at", "resolved_in_meeting_id"),
-            "blocker": ("blocker", Blocker, "resolved", "resolved_at", "resolved_in_meeting_id"),
-            "action_item": ("action_item", ActionItem, "completed", "completed_at", "completed_in_meeting_id"),
-        }
-
-        if item_type not in entity_map:
-            raise HTTPException(status_code=404, detail="Unknown item type")
-
-        entity_type, model_class, target_status, time_col, meeting_col = entity_map[item_type]
-
-        item = db.session.get(model_class, item_id)
-
-        if item is None or item.project_id != project.id:  # type: ignore[attr-defined]
-            raise HTTPException(status_code=404, detail="Item not found")
-
-        # execute(...).scalar() rather than session.scalar(select(...)):
-        # SQLAlchemy 2.1 types the latter as accepting only
-        # TypedReturnsRows[Never], so a column Select is rejected. Every
-        # other read in this file already uses the execute form.
-        latest_meeting_id = db.session.execute(
-            select(Meeting.id)
-            .filter_by(project_id=project.id)
-            .order_by(Meeting.created_at.desc())
-            .limit(1)
-        ).scalar()
-
-        if action == "resolve":
-            if item.status == target_status:  # type: ignore[attr-defined]
-                return {
-                    "status": item.status,  # type: ignore[attr-defined]
-                    "level": "warning",
-                    "message": f"{item.title} is already {target_status}.",  # type: ignore[attr-defined]
-                }
-
-            item.status = target_status  # type: ignore[attr-defined]
-            setattr(item, time_col, datetime.now(UTC))
-            setattr(item, meeting_col, None)
-            db.session.commit()
-            db.session.add(HistoryEvent(
-                project_id=project.id,
-                meeting_id=latest_meeting_id,
-                entity_type=entity_type,
-                entity_id=item.id,  # type: ignore[attr-defined]
-                event_type="manual_resolve",
-                summary=f"Manually resolved {entity_type}: {item.title}",  # type: ignore[attr-defined]
-                after_data={"status": target_status, "note": note},
-                created_at=datetime.now(UTC),
-            ))
-            db.session.commit()
-
-            return {
-                "status": item.status,  # type: ignore[attr-defined]
-                "level": "success",
-                "message": f"{entity_type.title()} resolved: {item.title}",  # type: ignore[attr-defined]
-            }
-
-        if action == "reopen":
-            if item.status == "open":  # type: ignore[attr-defined]
-                return {
-                    "status": item.status,  # type: ignore[attr-defined]
-                    "level": "warning",
-                    "message": f"{item.title} is already open.",  # type: ignore[attr-defined]
-                }
-
-            item.status = "open"  # type: ignore[attr-defined]
-            setattr(item, time_col, None)
-            setattr(item, meeting_col, None)
-            db.session.commit()
-            db.session.add(HistoryEvent(
-                project_id=project.id,
-                meeting_id=latest_meeting_id,
-                entity_type=entity_type,
-                entity_id=item.id,  # type: ignore[attr-defined]
-                event_type="manual_reopen",
-                summary=f"Manually reopened {entity_type}: {item.title}",  # type: ignore[attr-defined]
-                after_data={"status": "open", "note": note},
-                created_at=datetime.now(UTC),
-            ))
-            db.session.commit()
-
-            return {
-                "status": item.status,  # type: ignore[attr-defined]
-                "level": "success",
-                "message": f"{entity_type.title()} reopened: {item.title}",  # type: ignore[attr-defined]
-            }
-
-        return error_response("Unknown action.")
-
     # The untouched static design assets (tokens.css, styles.css),
     # served exactly as Flask served them.
     app.mount(
@@ -1009,17 +744,18 @@ def create_app(router_instance=None, database_url=None):
         name="static",
     )
 
-    # Analytics last of the routers, and before the catch-all below: the
-    # SPA fallback matches any path, so a router registered after it would
-    # never be reached. Keeping the include above the fallback is what
-    # makes that ordering hard to get wrong.
-    app.include_router(analytics_router)
-    app.include_router(meetings_router)
-
     # Serve the React production bundle. A file in frontend/dist wins
     # (hashed assets); any other path falls back to index.html so the
     # SPA router owns deep links like /projects/1/overview.
     dist_dir = Path("frontend/dist").resolve()
+
+    # The routers, registered before the catch-all below. Ordering matters
+    # here for a reason that is silent when it is wrong: spa_fallback
+    # matches any path, so a router registered after it would never be
+    # reached and its endpoints would 404 as the SPA.
+    app.include_router(analytics_router)
+    app.include_router(items_router)
+    app.include_router(meetings_router)
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str):

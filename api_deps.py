@@ -17,7 +17,7 @@ from fastapi import Depends, HTTPException
 
 from api_auth import get_current_user, require_admin
 from database import db
-from models import Project
+from models import HistoryEvent, Project
 
 
 def _get_project(project_id: int) -> Project:
@@ -27,6 +27,26 @@ def _get_project(project_id: int) -> Project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     return project
+
+
+def open_review_events(project):
+    """
+    Review events nobody has resolved yet.
+
+    The `~has()` filter rather than a left join: a resolution row existing
+    is what "resolved" means here, and two queries against the ORM read
+    more clearly than one outer join that has to be explained.
+    """
+
+    return (
+        HistoryEvent.query.filter_by(
+            project_id=project.id,
+            event_type="needs_review",
+        )
+        .filter(~HistoryEvent.review_resolution.has())
+        .order_by(HistoryEvent.id.desc())
+        .all()
+    )
 
 
 def get_router(request):
