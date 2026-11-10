@@ -213,255 +213,236 @@ def _apply_state(project, meeting, analysis):
     )
 
 
-def _apply_risks(project, meeting, risks):
-    for item in risks or []:
+# One create-or-update cycle, driven by a spec, because the three cycles
+# below used to be three copies of the same skeleton. They were not
+# identical: each item type has its own detail fields, its own vocabulary
+# for "done", and only action items parse a due date. Those differences
+# live in the specs, where they can be read side by side, rather than
+# being buried in three near-identical blocks where a change to one is
+# silently not made to the other two.
+#
+# The subtleties that the specs have to carry, each of which was a real
+# behaviour of the code it replaced:
+#
+# - A field the finding does not mention keeps its current value on
+#   update. _value defaults to "" (or "unknown"), which would erase
+#   stored detail that was never updated.
+# - On create the defaults are the empty ones the old code used:
+#   description "", impact "unknown", owner None. They are not the update
+#   defaults, so they are stated separately.
+# - A finding with no due date must not clear the stored one, and an
+#   unparseable date falls back to the stored value rather than to None.
+# - The history event snapshot differs per type, because the fields each
+#   type has differ.
+# Sentinels for the fields a "done" mark sets, so a literal value and a
+# computed one cannot be confused. Marking an item done sets three fields
+# at once: the status (a literal string), the timestamp (computed), and
+# the meeting it happened in (the current meeting). Writing that as
+# (field, value) pairs alone cannot tell "completed" the literal from
+# "completed" a marker, and getting it wrong sets status to the meeting id.
+_NOW = object()
+_THIS_MEETING = object()
+
+_ITEM_SPECS = {
+    "risk": {
+        "model": Risk,
+        "entity": "risk",
+        "label": "risk",
+        "done_status": "resolved",
+        "done_action": "resolved",
+        "done_label": "Resolved",
+        "update_label": "Updated",
+        "detail_fields": ("description", "impact", "mitigation"),
+        "create_defaults": {"description": "", "impact": "unknown", "mitigation": ""},
+        "due_date": False,
+        "snapshot_fields": ("status", "impact", "mitigation"),
+        "done_marks": (
+            ("status", "resolved"),
+            ("resolved_at", _NOW),
+            ("resolved_in_meeting_id", _THIS_MEETING),
+        ),
+    },
+    "blocker": {
+        "model": Blocker,
+        "entity": "blocker",
+        "label": "blocker",
+        "done_status": "resolved",
+        "done_action": "resolved",
+        "done_label": "Resolved",
+        "update_label": "Updated",
+        "detail_fields": ("description",),
+        "create_defaults": {"description": ""},
+        "due_date": False,
+        "snapshot_fields": ("status",),
+        "done_marks": (
+            ("status", "resolved"),
+            ("resolved_at", _NOW),
+            ("resolved_in_meeting_id", _THIS_MEETING),
+        ),
+    },
+    "action_item": {
+        "model": ActionItem,
+        "entity": "action_item",
+        "label": "action item",
+        "done_status": "completed",
+        "done_action": "completed",
+        "done_label": "Completed",
+        "update_label": "Updated",
+        "detail_fields": ("details", "owner", "due_date"),
+        "create_defaults": {"details": "", "owner": None},
+        "due_date": True,
+        "snapshot_fields": ("status", "owner", "due_date"),
+        "done_marks": (
+            ("status", "completed"),
+            ("completed_at", _NOW),
+            ("completed_in_meeting_id", _THIS_MEETING),
+        ),
+    },
+}
+
+
+def _snapshot(record, fields):
+    """The before/after dict for a history event, for the fields a type has."""
+
+    data = {}
+    for field in fields:
+        value = getattr(record, field, None)
+        data[field] = str(value) if isinstance(value, date) else value
+    return data
+
+
+def _parse_due_date(item, existing):
+    """
+    The due date a finding implies, or the stored one.
+
+    A finding that gives no date must not clear a stored one, and a date
+    that will not parse falls back to the stored value rather than to
+    None. Both were explicit behaviours of the code this replaces.
+    """
+
+    source = _value(item, "due_date", None)
+    stored = getattr(existing, "due_date", None)
+
+    if not source:
+        return stored
+
+    try:
+        return date.fromisoformat(source)
+    except (ValueError, TypeError):
+        return stored
+
+
+def _mark_done(record, spec, meeting):
+    """Set the fields that mean this item is done, per the type's vocabulary."""
+
+    for field, value in spec["done_marks"]:
+        if value is _NOW:
+            setattr(record, field, utcnow())
+        elif value is _THIS_MEETING:
+            setattr(record, field, meeting.id)
+        else:
+            setattr(record, field, value)
+
+
+def _apply_item_group(project, meeting, findings, spec):
+    """
+    Apply every finding of one item type: create what is new, update what
+    already exists, and record a history event either way.
+    """
+
+    model = spec["model"]
+
+    for item in findings or []:
         title = _value(item, "title")
 
         if not title:
             continue
 
-        risk = _find_by_canonical_title(Risk, project.id, title)
-        is_resolved = _value(item, "status", "open") == "resolved"
+        existing = _find_by_canonical_title(model, project.id, title)
+        done = _value(item, "status", "open") == spec["done_status"]
+        due_date = (
+            _parse_due_date(item, existing) if spec["due_date"] else None
+        )
 
-        if risk is None:
-            risk = Risk(
+        if existing is None:
+            record = model(
                 project_id=project.id,
                 title=title,
                 canonical_title=normalize_title(title),
-                description=_value(item, "description"),
-                impact=_value(item, "impact", "unknown"),
-                mitigation=_value(item, "mitigation"),
-                status="resolved" if is_resolved else "open",
+                status=spec["done_status"] if done else "open",
                 created_in_meeting_id=meeting.id,
                 updated_in_meeting_id=meeting.id,
+                **spec["create_defaults"],
             )
+            model_fields = spec["detail_fields"]
+            for field in model_fields:
+                if field == "due_date" and spec["due_date"]:
+                    setattr(record, field, due_date)
+                else:
+                    setattr(record, field, _value(item, field))
 
-            if is_resolved:
-                risk.resolved_at = utcnow()
-                risk.resolved_in_meeting_id = meeting.id
+            if done:
+                _mark_done(record, spec, meeting)
 
-            db.session.add(risk)
+            db.session.add(record)
             db.session.flush()
 
             _event(
                 project.id,
                 meeting.id,
-                "risk",
-                risk.id,
+                spec["entity"],
+                record.id,
                 "created",
-                f"Recorded risk: {title}",
-                after={"status": risk.status},
+                f"Recorded {spec['label']}: {title}",
+                after=_snapshot(record, spec["snapshot_fields"]),
             )
+            continue
 
-        else:
-            before = {
-                "status": risk.status,
-                "impact": risk.impact,
-                "mitigation": risk.mitigation,
-            }
+        before = _snapshot(existing, spec["snapshot_fields"])
 
-            # A field the finding does not mention keeps its current
-            # value: _value defaults to "" (or "unknown"), which would
-            # silently erase stored detail that was never updated.
-            risk.description = _value(item, "description", risk.description)
-            risk.impact = _value(item, "impact", risk.impact)
-            risk.mitigation = _value(item, "mitigation", risk.mitigation)
-            risk.updated_in_meeting_id = meeting.id
-
-            if is_resolved:
-                risk.status = "resolved"
-                risk.resolved_at = utcnow()
-                risk.resolved_in_meeting_id = meeting.id
-
-                action = "resolved"
-                summary = f"Resolved risk: {title}"
+        for field in spec["detail_fields"]:
+            if field == "due_date" and spec["due_date"]:
+                if due_date is not None:
+                    existing.due_date = due_date
             else:
-                action = "updated"
-                summary = f"Updated risk: {title}"
+                setattr(
+                    existing,
+                    field,
+                    _value(item, field, getattr(existing, field, None)),
+                )
 
-            _event(
-                project.id,
-                meeting.id,
-                "risk",
-                risk.id,
-                action,
-                summary,
-                before,
-                {
-                    "status": risk.status,
-                    "impact": risk.impact,
-                    "mitigation": risk.mitigation,
-                },
-            )
+        existing.updated_in_meeting_id = meeting.id
+
+        if done:
+            _mark_done(existing, spec, meeting)
+            action = spec["done_action"]
+            summary = f"{spec['done_label']} {spec['label']}: {title}"
+        else:
+            action = "updated"
+            summary = f"{spec['update_label']} {spec['label']}: {title}"
+
+        _event(
+            project.id,
+            meeting.id,
+            spec["entity"],
+            existing.id,
+            action,
+            summary,
+            before,
+            _snapshot(existing, spec["snapshot_fields"]),
+        )
+
+
+def _apply_risks(project, meeting, risks):
+    _apply_item_group(project, meeting, risks, _ITEM_SPECS["risk"])
 
 
 def _apply_blockers(project, meeting, blockers):
-    for item in blockers or []:
-        title = _value(item, "title")
-
-        if not title:
-            continue
-
-        blocker = _find_by_canonical_title(Blocker, project.id, title)
-        resolved = _value(item, "status", "open") == "resolved"
-
-        if blocker is None:
-            blocker = Blocker(
-                project_id=project.id,
-                title=title,
-                canonical_title=normalize_title(title),
-                description=_value(item, "description"),
-                status="resolved" if resolved else "open",
-                created_in_meeting_id=meeting.id,
-                updated_in_meeting_id=meeting.id,
-            )
-
-            if resolved:
-                blocker.resolved_at = utcnow()
-                blocker.resolved_in_meeting_id = meeting.id
-
-            db.session.add(blocker)
-            db.session.flush()
-
-            _event(
-                project.id,
-                meeting.id,
-                "blocker",
-                blocker.id,
-                "created",
-                f"Recorded blocker: {title}",
-            )
-
-        else:
-            before = {
-                "status": blocker.status,
-            }
-
-            blocker.description = _value(item, "description", blocker.description)
-            blocker.updated_in_meeting_id = meeting.id
-
-            if resolved:
-                blocker.status = "resolved"
-                blocker.resolved_at = utcnow()
-                blocker.resolved_in_meeting_id = meeting.id
-
-                action = "resolved"
-                summary = f"Resolved blocker: {title}"
-            else:
-                action = "updated"
-                summary = f"Updated blocker: {title}"
-
-            _event(
-                project.id,
-                meeting.id,
-                "blocker",
-                blocker.id,
-                action,
-                summary,
-                before,
-                {
-                    "status": blocker.status,
-                },
-            )
+    _apply_item_group(project, meeting, blockers, _ITEM_SPECS["blocker"])
 
 
 def _apply_actions(project, meeting, actions):
-    for item in actions or []:
-        title = _value(item, "title")
-
-        if not title:
-            continue
-
-        action_item = _find_by_canonical_title(ActionItem, project.id, title)
-        completed = _value(item, "status", "open") == "completed"
-
-        # A finding that gives no due date must not clear the stored one:
-        # parsing falls back to the current value, never to None.
-        due_date_source = _value(item, "due_date", None)
-
-        try:
-            due_date = (
-                date.fromisoformat(due_date_source)
-                if due_date_source
-                else action_item.due_date if action_item else None
-            )
-        except (ValueError, TypeError):
-            due_date = action_item.due_date if action_item else None
-
-        if action_item is None:
-            action_item = ActionItem(
-                project_id=project.id,
-                title=title,
-                canonical_title=normalize_title(title),
-                details=_value(item, "details"),
-                owner=_value(item, "owner", None),
-                due_date=due_date,
-                status="completed" if completed else "open",
-                created_in_meeting_id=meeting.id,
-                updated_in_meeting_id=meeting.id,
-            )
-
-            if completed:
-                action_item.completed_at = utcnow()
-                action_item.completed_in_meeting_id = meeting.id
-
-            db.session.add(action_item)
-            db.session.flush()
-
-            _event(
-                project.id,
-                meeting.id,
-                "action_item",
-                action_item.id,
-                "created",
-                f"Recorded action item: {title}",
-            )
-
-        else:
-            before = {
-                "status": action_item.status,
-                "owner": action_item.owner,
-                "due_date": (
-                    str(action_item.due_date)
-                    if action_item.due_date
-                    else None
-                ),
-            }
-
-            action_item.details = _value(item, "details", action_item.details)
-            action_item.owner = _value(item, "owner", action_item.owner)
-            action_item.due_date = due_date
-            action_item.updated_in_meeting_id = meeting.id
-
-            if completed:
-                action_item.status = "completed"
-                action_item.completed_at = utcnow()
-                action_item.completed_in_meeting_id = meeting.id
-
-                action = "completed"
-                summary = f"Completed action item: {title}"
-            else:
-                action = "updated"
-                summary = f"Updated action item: {title}"
-
-            _event(
-                project.id,
-                meeting.id,
-                "action_item",
-                action_item.id,
-                action,
-                summary,
-                before,
-                {
-                    "status": action_item.status,
-                    "owner": action_item.owner,
-                    "due_date": (
-                        str(action_item.due_date)
-                        if action_item.due_date
-                        else None
-                    ),
-                },
-            )
+    _apply_item_group(project, meeting, actions, _ITEM_SPECS["action_item"])
 
 
 def _apply_consolidation_item(
