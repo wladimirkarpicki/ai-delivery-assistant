@@ -387,6 +387,21 @@ CREATE TABLE public.users (
 
 
 --
+-- Logged-out token ids. Logout used to record these in an in-process set,
+-- which meant the revocation stopped taking effect after a restart until
+-- the token's own expiry. The id is the primary key so a check is one
+-- index lookup, and expires_at lets the row be dropped once its token has
+-- lapsed anyway. No foreign key to users on purpose: a revoked token has to
+-- outlive the account it belonged to, or deleting a user revives every
+-- token that user was ever issued.
+--
+CREATE TABLE public.revoked_tokens (
+    jti character varying(64) NOT NULL,
+    expires_at timestamp with time zone NOT NULL
+);
+
+
+--
 -- Name: users_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 

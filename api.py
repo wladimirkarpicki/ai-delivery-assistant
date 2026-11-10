@@ -25,6 +25,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import jwt
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,13 +37,13 @@ from pydantic import BaseModel, Field
 # Imported directly rather than through the db namespace: the staticmethod
 # re-export loses select()'s overloads, so mypy then reads a multi-column
 # select as a single-argument call.
-from sqlalchemy import func, select
+from sqlalchemy import extract, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from analyzer import analyze_document, parse_analysis
-from config import DEFAULT_MODEL, DEFAULT_PROVIDER, EMBEDDING_MODEL
+from config import DEFAULT_MODEL, DEFAULT_PROVIDER, EMBEDDING_MODEL, __version__
 from config_loader import (
     get_bootstrap_token,
     get_jwt_secret_key,
@@ -72,10 +73,12 @@ from models import (
     Project,
     ProjectState,
     ReviewResolution,
+    RevokedToken,
     Risk,
     User,
 )
 from project_memory import (
+    _bounded,
     apply_consolidation_plan,
     apply_meeting_analysis,
     apply_review_create,
@@ -85,6 +88,48 @@ from project_memory import (
 )
 from report import build_status_report
 from router import ModelRouter
+from telemetry import REQUEST_ID_HEADER, configure_logging, new_request_id
+
+# ---------------------------------------------------------------------------
+# Fixed operator-facing messages
+
+# Exceptions are logged, never echoed. A provider failure carries the
+# endpoint and status, and a database failure carries the statement, and
+# neither is something an anonymous caller should read. The caller gets
+# one of these instead; the log holds the cause with a request id.
+MODEL_LIST_UNAVAILABLE_MESSAGE = (
+    "The analysis service is temporarily unavailable. "
+    "Please try again shortly."
+)
+
+MEETING_SUBMIT_FAILED_MESSAGE = (
+    "This meeting could not be processed. "
+    "The meeting was not saved, so nothing was changed."
+)
+
+REVIEW_ACTION_FAILED_MESSAGE = (
+    "This review action could not be completed. Nothing was changed."
+)
+
+
+class UserFacingError(ValueError):
+    """
+    An error whose message was written for the person who triggered it.
+
+    The distinction matters because the handlers cannot return arbitrary
+    exception text: a provider failure carries the endpoint and status,
+    and a database failure carries the statement, and neither belongs in
+    a response. Validation failures have to reach the user though, or the
+    UI can only say "something went wrong" when the user simply forgot to
+    attach a file.
+
+    So validation raises this subclass, and only this subclass is echoed.
+    Everything else is logged and replaced with a fixed message. Because
+    this is a ValueError, any handler already catching ValueError keeps
+    working, which is what let the class be introduced without touching
+    the exception tuples.
+    """
+
 
 # ---------------------------------------------------------------------------
 # Request bodies
@@ -393,6 +438,29 @@ def embed_finding_titles(router, analysis):
     return dict(zip(titles, vectors))
 
 
+def _prune_revoked_rows() -> int:
+    """
+    Drop revoked-token rows whose token has expired.
+
+    Called on logout rather than on a request path: it is not on the hot
+    path, and a table holding rows whose token no longer matters is
+    clutter rather than a security issue. Returns the number removed so a
+    caller can log it.
+    """
+
+    try:
+        removed = (
+            db.session.query(RevokedToken)
+            .filter(RevokedToken.expires_at < datetime.now(UTC))
+            .delete(synchronize_session=False)
+        )
+        db.session.commit()
+        return int(removed or 0)
+    except SQLAlchemyError:
+        db.session.rollback()
+        return 0
+
+
 def history_changes(event):
     """
     Extract scalar field changes (field, old, new) from an event's
@@ -455,14 +523,6 @@ def serialize_action(action):
         "due_date": action.due_date.isoformat() if action.due_date else None,
         "status": action.status,
         "completed_at": _dt(action.completed_at),
-    }
-
-
-def serialize_decision(decision):
-    return {
-        "id": decision.id,
-        "title": decision.title,
-        "details": decision.details,
     }
 
 
@@ -564,15 +624,6 @@ class _SyncUpload:
     def getvalue(self) -> bytes:
         return self._buffer.getvalue()
 
-    def close(self):
-        return self._buffer.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()
-
 
 # ---------------------------------------------------------------------------
 # Application factory
@@ -586,6 +637,18 @@ def create_app(router_instance=None, database_url=None):
         title="AI Delivery Assistant",
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
+    )
+
+    # One formatter and level for the whole app, so a production line
+    # carries a timestamp, a level and a logger name. Before this the
+    # four loggers in the codebase ran on Python's defaults.
+    configure_logging()
+
+    # The version, on the first line the process writes. A bug report that
+    # does not name a version cannot be acted on, and before this there was
+    # nothing in the log or the response that carried it.
+    logging.getLogger("ai-delivery-assistant.startup").info(
+        "AI Delivery Assistant %s starting", __version__
     )
 
     # The Vite dev server proxies /api in development; production is
@@ -648,11 +711,17 @@ def create_app(router_instance=None, database_url=None):
         # threadpool thread that runs the endpoint.
         token = new_request_scope()
 
+        # Echo the caller's id or mint one, so a user-reported failure
+        # can be found in the log by matching this value.
+        request_id = request.headers.get(REQUEST_ID_HEADER) or new_request_id()
+        request.state.request_id = request_id
+
         try:
             response = await call_next(request)
         finally:
             close_request_scope(token)
 
+        response.headers[REQUEST_ID_HEADER] = request_id
         return response
 
     # ------------------------------------------------------------------
@@ -705,9 +774,16 @@ def create_app(router_instance=None, database_url=None):
 
     # Ids of tokens that have been signed out. A stateless JWT cannot be
     # un-issued, so without this the same token stays valid in any other
-    # browser or device until it expires. In-memory on purpose: it is
-    # per-process, which means a restart re-enables nothing longer-lived
-    # than a token's own ttl, and the set never holds whole sessions.
+    # browser or device until it expires. Only ids are compared, so this
+    # holds ids rather than whole sessions.
+    #
+    # This set is a cache, not the record. The record is the
+    # revoked_tokens table: an in-memory set alone meant a logout stopped
+    # taking effect after a restart, and the token lived for up to
+    # TOKEN_TTL_HOURS after that. Writing on logout and reading through to
+    # the table on a miss is what makes revocation survive a restart, and
+    # the set still saves a query on the hot path for a process that has
+    # already revoked the token.
     _revoked_ids: set[str] = set()
 
     def _is_revoked(token_value: str) -> bool:
@@ -719,9 +795,6 @@ def create_app(router_instance=None, database_url=None):
         valid anywhere else until it expires. Only ids are compared, so
         memory holds ids rather than whole sessions.
         """
-        if not _revoked_ids:
-            return False
-
         try:
             payload = jwt.decode(
                 token_value,
@@ -733,7 +806,41 @@ def create_app(router_instance=None, database_url=None):
         except (jwt.PyJWTError, TypeError, ValueError):
             return False
 
-        return bool(jti) and jti in _revoked_ids
+        if not jti:
+            return False
+
+        if jti in _revoked_ids:
+            return True
+
+        # A miss in the cache is answered from the table, which is where
+        # the answer survives a restart. The id is the primary key, so
+        # this is one index lookup, on the same query path the user
+        # lookup already takes.
+        row = db.session.get(RevokedToken, jti)
+
+        if row is None:
+            return False
+
+        _revoked_ids.add(jti)
+        return True
+
+    def _expiry_from_payload(payload) -> datetime:
+        """
+        The token's own expiry, as a UTC datetime.
+
+        Stored with the revocation so a row can be dropped once its token
+        has lapsed anyway. A payload with no exp falls back to now, which
+        makes the row immediately prunable rather than permanent: the
+        token carries no expiry to wait out, so there is nothing to
+        protect by keeping it.
+        """
+
+        exp = payload.get("exp") if isinstance(payload, dict) else None
+
+        if not isinstance(exp, (int, float)):
+            return datetime.now(UTC)
+
+        return datetime.fromtimestamp(exp, tz=UTC)
 
     def _is_https(request: Request) -> bool:
         """
@@ -917,13 +1024,46 @@ def create_app(router_instance=None, database_url=None):
                 )
                 jti = payload.get("jti")
                 if jti:
+                    # Written to the table as well as the cache, so the
+                    # revocation survives a restart. The row carries the
+                    # token's own expiry: until then it is the record, and
+                    # after it is dead weight, which _prune_revoked_rows
+                    # clears.
+                    if db.session.get(RevokedToken, jti) is None:
+                        db.session.add(
+                            RevokedToken(
+                                jti=jti,
+                                expires_at=_expiry_from_payload(payload),
+                            )
+                        )
+                    db.session.commit()
                     _revoked_ids.add(jti)
             except (jwt.PyJWTError, TypeError, ValueError):
                 # An unreadable token is already refused; nothing to revoke.
                 pass
+            except SQLAlchemyError:
+                # The cookie is still cleared and the cache still holds
+                # the id, so this browser and this process lose access
+                # either way. A failed write means only that the
+                # revocation would not survive a restart, and the caller
+                # is signed out regardless.
+                db.session.rollback()
+                logging.getLogger("ai-delivery-assistant.auth").warning(
+                    "could not persist a token revocation; it applies to this process only",
+                    exc_info=True,
+                )
 
         response = JSONResponse({"signed_out": True})
         clear_auth_cookie(response)
+
+        # Drop rows whose token already lapsed. Not on a request path, so
+        # a logout absorbs the cost of keeping the table bounded.
+        pruned = _prune_revoked_rows()
+        if pruned:
+            logging.getLogger("ai-delivery-assistant.auth").debug(
+                "pruned %d expired revoked-token row(s)", pruned
+            )
+
         return response
 
     @app.get("/api/auth/me")
@@ -1351,33 +1491,42 @@ def create_app(router_instance=None, database_url=None):
             )
         ]
 
-        # The activity timeline renders a bounded window of months, so the
-        # rows it needs are bounded too. Without the window this loads
-        # every Meeting and HistoryEvent row into Python on each request,
-        # and HistoryEvent grows with every event of every item of every
-        # meeting, so the cost rises for the life of the database.
+        # The timeline is aggregated by the database, not in Python.
         #
-        # The bound is a datetime comparison, not a dialect-specific date
-        # function: the tests run on SQLite and production on PostgreSQL,
-        # and strftime and date_trunc each exist in only one of them.
-        ACTIVITY_WINDOW_MONTHS = 24
-
+        # The previous version read every created_at into Python and
+        # counted there, which is O(rows) per request on a table where
+        # HistoryEvent grows with every event of every item of every
+        # meeting. A first attempt fixed that by bounding the window to 24
+        # months, but that hid data: a month older than the window was
+        # absent from the timeline, and the gap looked identical to a
+        # month with nothing in it.
+        #
+        # GROUP BY is the fix that does not choose a cutoff. It returns one
+        # row per distinct month, so the work is proportional to how long
+        # history has been kept rather than to how many rows it holds, and
+        # every month that exists is in the result.
+        #
+        # extract() rather than strftime or date_trunc: those are SQLite
+        # and PostgreSQL only, and the tests run on SQLite while
+        # production runs PostgreSQL. SQLAlchemy compiles extract for both.
         def month_counts(model):
-            counts: dict[tuple[int, int], int] = {}
-            cutoff = datetime.now(UTC) - timedelta(
-                days=ACTIVITY_WINDOW_MONTHS * 30
-            )
+            rows = db.session.execute(
+                select(
+                    extract("year", model.created_at),
+                    extract("month", model.created_at),
+                    func.count(),
+                )
+                .where(model.created_at.isnot(None))
+                .group_by(
+                    extract("year", model.created_at),
+                    extract("month", model.created_at),
+                )
+            ).all()
 
-            for (created_at,) in db.session.execute(
-                select(model.created_at).where(model.created_at >= cutoff)
-            ).all():
-                if created_at is None:
-                    continue
-
-                key = (created_at.year, created_at.month)
-                counts[key] = counts.get(key, 0) + 1
-
-            return counts
+            return {
+                (int(year), int(month)): count
+                for year, month, count in rows
+            }
 
         meeting_months = month_counts(Meeting)
         event_months = month_counts(HistoryEvent)
@@ -1435,7 +1584,10 @@ def create_app(router_instance=None, database_url=None):
 
     @app.post("/api/projects", status_code=201)
     def projects_create(body: ProjectCreate, user: dict = Depends(get_current_user)):
-        name = (body.name or "").strip()
+        # Clamped, not merely stripped: projects.name is varchar(200) and
+        # PostgreSQL rejects an over-long value with a 500, which SQLite
+        # would have accepted silently.
+        name = _bounded((body.name or "").strip(), "name")
         description = (body.description or "").strip()
 
         if not name:
@@ -1501,7 +1653,7 @@ def create_app(router_instance=None, database_url=None):
         }
 
     @app.post("/api/projects/{project_id}/meetings", status_code=201)
-    async def add_meeting(
+    def add_meeting(
         project_id: int,
         title: str = Form(""),
         meeting_notes: str = Form(""),
@@ -1512,8 +1664,22 @@ def create_app(router_instance=None, database_url=None):
 
         try:
             models = get_available_models(router)
-        except (ValueError, RuntimeError) as exception:
-            return error_response(str(exception))
+        except (ValueError, RuntimeError, httpx.HTTPError, httpx.TransportError) as exception:
+            # Provider failures arrive as httpx errors, not as ValueError:
+            # tenacity retries with reraise=True, so a 429 or a timeout
+            # surfaces the original HTTPStatusError/TimeoutException. Without
+            # those classes in the tuple this returned a bare 500.
+            #
+            # The exception text is logged and never returned: it carries
+            # the provider's URL and status, which tells an anonymous
+            # caller something about the infrastructure. The caller gets a
+            # fixed sentence instead, and the operator gets the cause.
+            logging.getLogger("ai-delivery-assistant.meetings").warning(
+                "model list unavailable for a meeting submission: %s: %s",
+                type(exception).__name__,
+                exception,
+            )
+            return error_response(MODEL_LIST_UNAVAILABLE_MESSAGE)
 
         selected_model = DEFAULT_MODEL if DEFAULT_MODEL in models else None
 
@@ -1527,13 +1693,21 @@ def create_app(router_instance=None, database_url=None):
                 # document_parser.extract_text speaks the Flask
                 # FileStorage protocol (sync .read(), .filename); wrap
                 # the already-loaded upload bytes in that shape.
-                upload_bytes = await meeting_file.read()
+                #
+                # This endpoint is sync on purpose: the pipeline below
+                # makes blocking LLM calls with a 180 s timeout each, and
+                # an async def would run it on the event loop, stalling
+                # every other request including /api/health. As a sync
+                # endpoint FastAPI runs it in the threadpool instead.
+                upload_bytes = meeting_file.file.read()
                 original_text = extract_text(_SyncUpload(meeting_file.filename, upload_bytes))
-                source_filename = meeting_file.filename
+                # The client controls this string, and source_filename is
+                # varchar(255), so a long name would fail on PostgreSQL.
+                source_filename = _bounded(meeting_file.filename, "source_filename")
             elif meeting_notes.strip():
                 original_text, source_filename = meeting_notes.strip(), None
             else:
-                raise ValueError("Upload meeting notes or paste meeting text.")
+                raise UserFacingError("Upload meeting notes or paste meeting text.")
 
             # Idempotency: re-submitting identical notes is a
             # no-op rather than a second memory mutation.
@@ -1543,7 +1717,7 @@ def create_app(router_instance=None, database_url=None):
             ).first()
 
             if duplicate_meeting is not None:
-                raise ValueError(
+                raise UserFacingError(
                     f"Identical meeting notes already exist "
                     f"({duplicate_meeting.title}, "
                     f"{duplicate_meeting.created_at:%Y-%m-%d}). "
@@ -1603,11 +1777,35 @@ def create_app(router_instance=None, database_url=None):
                     meeting,
                     combine_plans(pre_matched["auto"], consolidation_plan),
                 )
-            except (ValueError, RuntimeError, KeyError, TypeError) as consolidation_error:
-                # Fallback to traditional analysis if consolidation fails
+            except (
+                ValueError,
+                RuntimeError,
+                KeyError,
+                TypeError,
+                httpx.HTTPError,
+                httpx.TransportError,
+            ) as consolidation_error:
+                # Fallback to traditional analysis if consolidation fails.
+                # The httpx classes matter: without them a provider failure
+                # during consolidation escapes this handler entirely and the
+                # endpoint returns 500 instead of degrading to the
+                # deterministic path, which is what this branch documents.
+                #
+                # The cause goes to the log and not into the warning. The
+                # warning is part of the response, and the exception text
+                # carries the provider endpoint and status, or the failing
+                # statement, which is exactly what an anonymous caller
+                # should not read. The caller is told that the deterministic
+                # path was used; the operator is told why.
+                logging.getLogger("ai-delivery-assistant.meetings").warning(
+                    "consolidation fell back to standard analysis: %s: %s",
+                    type(consolidation_error).__name__,
+                    consolidation_error,
+                    exc_info=True,
+                )
                 warning = (
-                    "Note: Consolidation encountered an issue "
-                    f"({consolidation_error!s}), using standard analysis."
+                    "Note: Consolidation encountered an issue, "
+                    "so standard analysis was used instead."
                 )
                 apply_meeting_analysis(project, meeting, analysis_json)
             else:
@@ -1624,14 +1822,36 @@ def create_app(router_instance=None, database_url=None):
                 response["warning"] = warning  # type: ignore[assignment]
 
             return response
-        except (ValueError, RuntimeError, SQLAlchemyError) as exception:
+        except (
+            ValueError,
+            RuntimeError,
+            SQLAlchemyError,
+            httpx.HTTPError,
+            httpx.TransportError,
+        ) as exception:
             # SQLAlchemyError is in the tuple on purpose. SQLite does not
             # enforce varchar(n), so a too-long value from an LLM (or a
             # long upload filename) is only caught on a real PostgreSQL,
             # where it raises DataError. Without this, that surface is a
-            # 500 instead of a 400, and the session is left dirty.
+            # 500 instead of a 400, and the session is left dirty. The
+            # httpx classes cover a provider failure that escapes the
+            # inner handler.
             db.session.rollback()
-            return error_response(str(exception))
+
+            # The two raises inside this block carry messages written for
+            # the user, so they are returned. Everything else is either a
+            # provider failure or an internal error whose text says where
+            # the stack lives, and that goes to the log only.
+            if isinstance(exception, UserFacingError):
+                return error_response(str(exception))
+
+            logging.getLogger("ai-delivery-assistant.meetings").warning(
+                "meeting submission failed: %s: %s",
+                type(exception).__name__,
+                exception,
+                exc_info=True,
+            )
+            return error_response(MEETING_SUBMIT_FAILED_MESSAGE)
 
     @app.get("/api/meetings/{meeting_id}")
     def meeting_detail(meeting_id: int, user: dict = Depends(get_current_user)):
@@ -1792,7 +2012,7 @@ def create_app(router_instance=None, database_url=None):
                 model_class = review_model_class(event.entity_type)
 
                 if model_class is None:
-                    raise ValueError("Unknown entity type.")
+                    raise UserFacingError("Unknown entity type.")
 
                 raw_target = body.target_item_id
 
@@ -1801,7 +2021,7 @@ def create_app(router_instance=None, database_url=None):
                     target = db.session.get(model_class, int(raw_target))
 
                 if target is None or target.project_id != project.id:
-                    raise ValueError(
+                    raise UserFacingError(
                         "Pick an item from this project to link to."
                     )
 
@@ -1817,10 +2037,25 @@ def create_app(router_instance=None, database_url=None):
             elif action == "dismiss":
                 resolution_action = "acknowledged"
             else:
-                raise ValueError("Unknown review action.")
-        except ValueError as exception:
+                raise UserFacingError("Unknown review action.")
+        except UserFacingError as exception:
+            # Only the authored validation message is echoed. The other
+            # exceptions this block can raise come from the consolidation
+            # and merge helpers, and their text describes an internal
+            # failure, so it goes to the log and the caller gets a fixed
+            # sentence.
             db.session.rollback()
             return error_response(str(exception))
+        except Exception as exception:
+            db.session.rollback()
+            logging.getLogger("ai-delivery-assistant.review").warning(
+                "review action %r failed: %s: %s",
+                action,
+                type(exception).__name__,
+                exception,
+                exc_info=True,
+            )
+            return error_response(REVIEW_ACTION_FAILED_MESSAGE)
 
         note = (body.note or "").strip()
 
@@ -1865,12 +2100,16 @@ def create_app(router_instance=None, database_url=None):
         if item is None or item.project_id != project.id:  # type: ignore[attr-defined]
             raise HTTPException(status_code=404, detail="Item not found")
 
-        latest_meeting_id = db.session.scalar(
+        # execute(...).scalar() rather than session.scalar(select(...)):
+        # SQLAlchemy 2.1 types the latter as accepting only
+        # TypedReturnsRows[Never], so a column Select is rejected. Every
+        # other read in this file already uses the execute form.
+        latest_meeting_id = db.session.execute(
             select(Meeting.id)
             .filter_by(project_id=project.id)
             .order_by(Meeting.created_at.desc())
             .limit(1)
-        )
+        ).scalar()
 
         if action == "resolve":
             if item.status == target_status:  # type: ignore[attr-defined]

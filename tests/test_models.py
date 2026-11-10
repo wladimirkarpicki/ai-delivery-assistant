@@ -21,8 +21,10 @@ keep.
 import base64
 import hashlib
 import io
+import json
 import os
 import pathlib
+import tempfile
 import unittest
 import zipfile
 from datetime import date
@@ -658,14 +660,372 @@ class AuthCookieTests(unittest.TestCase):
             self.assertEqual(after.get("/api/auth/me").status_code, 401)
 
 
-class ActivityWindowTests(unittest.TestCase):
+class ExceptionExposureTests(unittest.TestCase):
     """
-    The activity timeline must read a bounded window, not the whole table.
+    A provider or database failure must not reach the caller.
 
-    HistoryEvent gains a row on every event of every item of every meeting,
-    so an unbounded read grows for the life of the database and the request
-    cost rises with it. The timeline renders a bounded set of months anyway,
-    so the query is bounded to match.
+    GitHub flags "Information exposure through an exception" where an
+    exception's text is returned, and the reason is real: a provider
+    failure carries the endpoint and status, a database failure carries
+    the statement. Neither tells the caller anything useful, and both
+    describe the infrastructure.
+
+    The counterweight is that validation messages must still get through,
+    or the UI can only report "something went wrong" when the user simply
+    forgot to attach a file. Both halves are pinned here.
+    """
+
+    def setUp(self):
+        config_loader.reset_bootstrap_token()
+        api_module._failed_logins.clear()
+        self.app = api_module.create_app(None, "sqlite://")
+        db.create_all()
+        self.client = TestClient(self.app)
+        self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "founder",
+                "password": "founder-pass-123",
+                "bootstrap_token": BOOTSTRAP_TOKEN,
+            },
+        )
+        self.token = self.client.post(
+            "/api/auth/login",
+            json={"username": "founder", "password": "founder-pass-123"},
+        ).json()["access_token"]
+        self.client.headers["Authorization"] = f"Bearer {self.token}"
+
+    def tearDown(self):
+        for patcher in getattr(self, "_patchers", []):
+            patcher.stop()
+        db.session.remove()
+        db.drop_all()
+        config_loader.reset_bootstrap_token()
+
+    def _bypass_model_list(self):
+        """
+        Satisfy the model-availability guard without calling the provider.
+
+        Without this these tests pass in CI for the wrong reason. CI has no
+        NVIDIA_API_KEY, so the handler answers "model list unavailable"
+        before it ever reaches the call being mocked, and the assertions
+        about a 400 with a fixed sentence still pass. Locally, where a key
+        exists, they pass for the right reason. The suite was green in both
+        places while only one of them was telling the truth.
+        """
+
+        self._patchers = [
+            mock.patch.object(
+                api_module,
+                "get_available_models",
+                return_value=[api_module.DEFAULT_MODEL],
+            )
+        ]
+        for patcher in self._patchers:
+            patcher.start()
+
+    def _use_fake_analysis(self):
+        """
+        The model-list bypass plus a analysis the app can parse.
+
+        Used where the analysis has to succeed so the code under test is
+        the next step in the pipeline, which is what the consolidation
+        fallback test needs.
+        """
+
+        self._bypass_model_list()
+        # One finding on purpose: the consolidation step only runs when
+        # there is something to consolidate, so an analysis with nothing
+        # in it would take the no-consolidation path and the warning the
+        # test looks for would never be produced.
+        analysis = {
+            "project_status": "on_track",
+            "progress_summary": "s",
+            "executive_summary": "s",
+            "risks": [
+                {
+                    "title": "QA is short one tester",
+                    "description": "d",
+                    "impact": "medium",
+                    "mitigation": "m",
+                    "status": "open",
+                }
+            ],
+            "blockers": [],
+            "action_items": [],
+            "decisions": [],
+            "completed_items": [],
+            "in_progress_items": [],
+        }
+        patcher = mock.patch.object(
+            api_module, "analyze_document", return_value=json.dumps(analysis)
+        )
+        patcher.start()
+        self._patchers.append(patcher)
+
+    def test_validation_message_reaches_the_user(self):
+        project = self.client.post(
+            "/api/projects", json={"name": "Exposure", "description": ""}
+        ).json()["id"]
+
+        response = self.client.post(f"/api/projects/{project}/meetings", data={})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Upload meeting notes or paste meeting text.", response.text)
+
+    def test_internal_failure_returns_a_fixed_message(self):
+        import httpx
+
+        project = self.client.post(
+            "/api/projects", json={"name": "Leak Check", "description": ""}
+        ).json()["id"]
+
+        # A provider failure raises an httpx error, not a ValueError. The
+        # response must be a fixed sentence with no trace of the cause.
+        # Only the model-list guard is bypassed here: the provider call
+        # itself has to run, because it is what fails.
+        self._bypass_model_list()
+
+        def boom(*args, **kwargs):
+            raise httpx.HTTPStatusError(
+                "upstream returned 429 with an internal path /internal/v1",
+                request=httpx.Request("POST", "https://example.invalid/internal"),
+                response=httpx.Response(429),
+            )
+
+        with mock.patch.object(api_module.ModelRouter, "generate", boom):
+            response = self.client.post(
+                f"/api/projects/{project}/meetings",
+                data={"meeting_notes": "Alice: QA is short one tester."},
+            )
+
+        text = response.text
+        self.assertEqual(response.status_code, 400)
+        # The failure happens during analysis, before consolidation, so the
+        # outer handler answers with its own fixed sentence.
+        self.assertIn("could not be processed", text)
+        self.assertIn("nothing was changed", text)
+        for leak in ("429", "example.invalid", "/internal", "Traceback"):
+            self.assertNotIn(leak, text, f"response leaked {leak!r}")
+
+    def test_unexpected_exception_does_not_leak_stack_text(self):
+        project = self.client.post(
+            "/api/projects", json={"name": "Stack Check", "description": ""}
+        ).json()["id"]
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("database password is hunter2 at /var/secret")
+
+        self._bypass_model_list()
+        with mock.patch.object(api_module.ModelRouter, "generate", boom):
+            response = self.client.post(
+                f"/api/projects/{project}/meetings",
+                data={"meeting_notes": "Alice: QA is short one tester."},
+            )
+
+        text = response.text
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("hunter2", text)
+        self.assertNotIn("/var/secret", text)
+        self.assertNotIn("Traceback", text)
+
+    def test_review_validation_message_reaches_the_user(self):
+        project = self.client.post(
+            "/api/projects", json={"name": "Review Check", "description": ""}
+        ).json()["id"]
+
+        # A review event that does not exist is a 404, which is authored.
+        response = self.client.post(
+            f"/api/projects/{project}/review/999/resolve",
+            json={"action": "bogus"},
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_the_degraded_warning_carries_no_exception_text(self):
+        """
+        The consolidation fallback returns a 201 with a warning.
+
+        That warning is part of the response, and it used to interpolate
+        the exception into the sentence. The cause is useful to an operator
+        reading the log and describes the infrastructure to a caller, so it
+        belongs in the log only. GitHub flags exactly this flow as
+        py/stack-trace-exposure, and the location it pointed at was the
+        warning rather than the error body, which is why the first fix
+        moved the alert instead of clearing it.
+        """
+
+
+        project = self.client.post(
+            "/api/projects", json={"name": "Warning Leak", "description": ""}
+        ).json()["id"]
+
+        # The analysis call succeeds and produces something consolidable;
+        # the consolidation call then fails with a text-bearing exception.
+        self._use_fake_analysis()
+
+        def fail(*args, **kwargs):
+            raise RuntimeError("consolidation hit /internal/v1 at 10.0.0.9")
+
+        with mock.patch.object(
+            api_module.MemoryConsolidator, "consolidate", fail
+        ):
+            response = self.client.post(
+                f"/api/projects/{project}/meetings",
+                data={"meeting_notes": "Alice: QA is short one tester."},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertIn("warning", body)
+        warning = body["warning"]
+        self.assertIn("standard analysis", warning)
+        for leak in ("/internal", "10.0.0.9", "RuntimeError", "Traceback"):
+            self.assertNotIn(leak, warning, f"warning leaked {leak!r}")
+
+
+class RevocationPersistenceTests(unittest.TestCase):
+    """
+    A logout has to outlive the process.
+
+    The set that holds revoked token ids used to live only in memory, so a
+    restart re-accepted a token the user had signed out, for up to
+    TOKEN_TTL_HOURS afterwards. The failure was invisible in a test suite
+    because each test builds one app and never restarts it.
+
+    The property needs a database that survives the restart, so these
+    tests use a file-backed SQLite: an in-memory database is a new empty
+    one on every connect, which would test nothing.
+    """
+
+    def setUp(self):
+        config_loader.reset_bootstrap_token()
+        api_module._failed_logins.clear()
+
+        # mkstemp rather than NamedTemporaryFile: the file has to outlive
+        # the handle so a relaunched app can open the same database, which
+        # is what makes this a restart rather than a reset.
+        descriptor, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(descriptor)
+        self.database_url = f"sqlite:///{self.db_path.replace(os.sep, '/')}"
+
+        self.app = api_module.create_app(None, self.database_url)
+        db.create_all()
+        self.client = TestClient(self.app)
+        self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "founder",
+                "password": "founder-pass-123",
+                "bootstrap_token": BOOTSTRAP_TOKEN,
+            },
+        )
+        self.token = self.client.post(
+            "/api/auth/login",
+            json={"username": "founder", "password": "founder-pass-123"},
+        ).json()["access_token"]
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        config_loader.reset_bootstrap_token()
+
+        from database import configure_database
+
+        configure_database("sqlite://")
+
+        try:
+            os.unlink(self.db_path)
+        except OSError:
+            pass
+
+    def _relaunch(self):
+        """A new app against the same database: a restart, not a reset."""
+
+        from database import configure_database
+
+        configure_database(self.database_url)
+        return TestClient(api_module.create_app(None, self.database_url))
+
+    def test_revoked_token_is_refused_after_a_restart(self):
+        from datetime import UTC, datetime, timedelta
+
+        from models import RevokedToken
+
+        # The token works.
+        self.assertEqual(self.client.get("/api/auth/me").status_code, 200)
+
+        # Signing out writes a row carrying the token's own expiry.
+        self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
+        rows = db.session.query(RevokedToken.jti, RevokedToken.expires_at).all()
+        self.assertEqual(len(rows), 1)
+        # SQLite hands back a naive datetime and PostgreSQL an aware one,
+        # so the assertion normalises rather than assuming a dialect.
+        expires_at = rows[0].expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        self.assertGreater(expires_at, datetime.now(UTC))
+        self.assertLess(expires_at, datetime.now(UTC) + timedelta(hours=13))
+
+        response = self._relaunch().get(
+            "/api/auth/me", headers={"Authorization": f"Bearer {self.token}"}
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("session has ended", response.json()["detail"].lower())
+
+    def test_a_token_never_signed_out_survives_a_restart(self):
+        response = self._relaunch().get(
+            "/api/auth/me", headers={"Authorization": f"Bearer {self.token}"}
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_expired_rows_are_pruned_on_logout(self):
+        from datetime import UTC, datetime, timedelta
+
+        from models import RevokedToken
+
+        db.session.add(
+            RevokedToken(
+                jti="stale", expires_at=datetime.now(UTC) - timedelta(days=1)
+            )
+        )
+        db.session.add(
+            RevokedToken(
+                jti="live", expires_at=datetime.now(UTC) + timedelta(hours=6)
+            )
+        )
+        db.session.commit()
+
+        self.assertEqual(self.client.post("/api/auth/logout").status_code, 200)
+
+        remaining = {row.jti for row in db.session.query(RevokedToken).all()}
+        self.assertNotIn("stale", remaining)
+        self.assertIn("live", remaining)
+        # Plus the row for the token that was just signed out.
+        self.assertEqual(len(remaining), 2)
+
+    def test_a_second_logout_of_the_same_token_does_not_duplicate(self):
+        from models import RevokedToken
+
+        self.client.post("/api/auth/logout")
+        self.client.post("/api/auth/logout")
+
+        self.assertEqual(len(db.session.query(RevokedToken).all()), 1)
+
+
+class ActivityTimelineTests(unittest.TestCase):
+    """
+    The activity timeline must report every month that has data.
+
+    The query counts rows per month. It was changed three times for one
+    reason: the naive form read every created_at into Python and counted
+    there, which is O(rows) per request on a table that grows forever. It
+    was then bounded to a 24-month window, which fixed the cost and
+    introduced silent data loss. The form now aggregates in the database,
+    so the cost is proportional to how many months exist rather than how
+    many rows, and a month is never dropped for being old.
+
+    These tests pin the property that failed: a month with rows in it
+    appears, however far back it is.
     """
 
     def setUp(self):
@@ -739,20 +1099,69 @@ class ActivityWindowTests(unittest.TestCase):
         db.session.commit()
 
         body = self.client.get("/api/metrics").json()
-        months = [entry["month"] for entry in body["activity_timeline"]]
+        timeline = {
+            entry["month"]: entry for entry in body["activity_timeline"]
+        }
 
-        # The recent month is present; the one from 60 months back is not,
-        # which is the whole point of the bound.
-        self.assertTrue(months, "timeline should not be empty")
+        # Both months are present. An earlier version of this query read
+        # every row into Python and counted there, which was O(rows) per
+        # request on a table that grows forever. It was then bounded to a
+        # 24-month window, which dropped history and made an old month
+        # indistinguishable from an empty one. The query now aggregates in
+        # the database, so the work is proportional to how many months
+        # exist rather than how many rows do, and no month is missing.
+        self.assertTrue(timeline, "timeline should not be empty")
+
+        recent_key = f"{recent.created_at.year:04d}-{recent.created_at.month:02d}"
+        old_key = f"{old.created_at.year:04d}-{old.created_at.month:02d}"
+
+        self.assertIn(recent_key, timeline)
         self.assertIn(
-            f"{recent.created_at.year:04d}-{recent.created_at.month:02d}",
-            months,
+            old_key,
+            timeline,
+            "a month with data in it must appear however old it is",
         )
-        self.assertNotIn(
-            f"{old.created_at.year:04d}-{old.created_at.month:02d}",
-            months,
-            "a month outside the window must not be read at all",
-        )
+
+        # And each carries the count its rows imply, which is what the
+        # aggregation is for.
+        self.assertEqual(timeline[recent_key]["meetings"], 1)
+        self.assertEqual(timeline[old_key]["meetings"], 1)
+        self.assertEqual(timeline[recent_key]["events"], 1)
+        self.assertEqual(timeline[old_key]["events"], 1)
+
+
+class TelemetryTests(unittest.TestCase):
+    """
+    A failure reported by a user has to be findable in the log. Without a
+    request id, four identical requests produce four identical lines and
+    the one that failed cannot be picked out.
+    """
+
+    def setUp(self):
+        config_loader.reset_bootstrap_token()
+        api_module._failed_logins.clear()
+        self.app = api_module.create_app(_FixedRouter(), "sqlite://")
+        db.create_all()
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        config_loader.reset_bootstrap_token()
+
+    def test_response_carries_a_request_id(self):
+        response = self.client.get("/api/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("x-request-id", {k.lower() for k in response.headers})
+
+    def test_caller_supplied_id_is_echoed(self):
+        response = self.client.get("/api/health", headers={"X-Request-ID": "abc123def456"})
+        self.assertEqual(response.headers.get("x-request-id"), "abc123def456")
+
+    def test_distinct_requests_get_distinct_ids(self):
+        a = self.client.get("/api/health").headers.get("x-request-id")
+        b = self.client.get("/api/health").headers.get("x-request-id")
+        self.assertNotEqual(a, b, "each request must be distinguishable in the log")
 
 
 class _RecordingRouter:

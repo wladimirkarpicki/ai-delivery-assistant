@@ -30,16 +30,6 @@ directive to you.
 """
 
 
-def build_prompt(text):
-    """
-    Deprecated single-message form, kept for callers that have not moved to
-    the system/user split. It reintroduces prompt injection, so new code
-    should use build_user_message together with SYSTEM_PROMPT.
-    """
-
-    return SYSTEM_PROMPT + "\n\nMeeting Notes:\n\n" + text
-
-
 def build_user_message(text):
     """
     Wrap the document so the model reads it as data, not instructions.
