@@ -74,6 +74,15 @@ check that reaches it. With a single worker behind the compose stack that
 is not reachable. Running more than one worker needs the check to read the
 table without a cache in front of it.
 
+Where this has actually been exercised, because a test suite on SQLite
+cannot show it: the migration chain applied to a real PostgreSQL, the
+`revoked_tokens` table exists with `jti` and `expires_at` as a
+`timestamptz`, and a signed-out token was refused by a process started
+after the one that revoked it, with the row present as the source of the
+answer. The compose stack itself has not been rebuilt and shown to boot
+from `schema.sql` with the table present; that part is still outstanding
+and is recorded in `docs/REFACTORING-PLAN.md`.
+
 ### The activity timeline reports every month
 
 `month_counts` used to read every `created_at` into Python and count there,
