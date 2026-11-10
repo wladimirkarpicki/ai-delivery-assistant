@@ -34,25 +34,12 @@ when their own value is lower.
 | OpenRouter replaced by the NVIDIA build gateway | The provider the app could actually reach |
 | `api.py` monitors/observability: `telemetry.py`, a log format, a request id | A failure nobody can find in a log is not observable |
 | `main` branch protected: 10 required checks, force-push and deletion blocked | Direct pushes are how the leak would have been reintroduced |
-
-## In progress
-
-| Item | State |
-|---|---|
-| Central logging and request correlation | Landed in `6918a7b`, CI #90 8/8, verified live |
-| Second-round audit: PostgreSQL correctness | Agent running |
-| Second-round audit: architecture and code quality | Agent running |
-| Second-round audit: frontend | Agent running |
-| Second-round audit: observability and process | Delivered; findings folded into `6918a7b` |
-
-## Not started
-
-| Item | Value | Blocked by |
-|---|---|---|
-| Router split of `api.py` | The user's stated top candidate | The architecture audit's concrete blueprint |
-| Dependency merge (10 dependabot PRs) | Unblocks security patches | Branch protection already on; each merge needs a green run |
-| Asset split of the frontend bundle | Load time | The frontend audit's measured composition |
-| Frontend test setup | Regression safety | The frontend audit's proposal |
+| Router split of `api.py` | 2212 lines to 441, split across four routers and five support modules |
+| Token revocation persisted to a table | An in-memory set meant a logout stopped working after a restart |
+| The activity timeline aggregates in SQL | It read every row into Python and counted there; bounding it to 24 months dropped history silently |
+| `project_memory.py` consolidation cycles collapsed | Three near-identical copies, and a 441-line function |
+| Frontend test suite | Zero tests; a regression in what a page rendered was caught by nobody |
+| All 8 dependabot PRs resolved | Two needed the change applied on `main` with a real code fix, not a merge |
 
 ## Landed this round, each verified
 
@@ -89,6 +76,35 @@ written.
 
 The standing lesson: verify a database change by connecting the way the
 application does, never from inside the database container.
+
+## Not closed: revocation unproven on PostgreSQL
+
+Token revocation is persisted to a `revoked_tokens` table and the test
+suite passes, but the suite runs on SQLite. That is the dialect which
+hides exactly this bug class: `session.scalar` typing differences, NOT
+NULL enforcement and varchar widths all behave differently there, and two
+of those three have already bitten this project once.
+
+The live container also had a second reason it could not prove anything:
+its database volume was already initialised, so `schema.sql` was never
+loaded and the table did not exist in the running database at all.
+
+The blocker to closing this is disk space, not code. The `C:` drive had
+28 MB free of 75.2 GB, which is why Docker Desktop answered `unable to
+start` — its WSL vhdx had no room to operate. Safe caches were emptied for
+1.39 GB (npm, uv, pip, 15k stale temp files, browser caches) and Docker was
+relaunched from a full process kill and `wsl --shutdown`, and the engine
+still does not come up, so more is needed.
+
+Two things are deliberately not deleted to find it, because neither is
+mine to remove: `hermes` (4.97 GB, a third-party agent with an update lock
+dated today) and the OS directories `WinSxS` (8.36 GB) and `System32`
+(4.81 GB).
+
+To close it: free several GB, then `docker builder prune -af`, re-pull
+`node:22-alpine` and `python:3.13-slim`, `docker compose build` from HEAD,
+confirm `revoked_tokens` exists in the fresh database, and run the live
+login/logout/restart probe.
 
 ## Explicit non-goals
 
