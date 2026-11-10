@@ -134,9 +134,18 @@ All schema changes go through Alembic. Never edit a migration that has already b
    ```
 5. Commit the model change and the migration together.
 
+`schema.sql` is a second copy of the same schema, and it is what the
+compose stack initializes from: `compose.yml` mounts it at
+`/docker-entrypoint-initdb.d/` and the postgres image applies it on first
+boot of an empty data directory. That stack does not run Alembic, so a
+model change is not visible in a container until it is also in
+`schema.sql`. Update both, or the container and the local Alembic
+database will disagree in a way that only shows up when one of them is
+fresh.
+
 ## Conventions
 
-- Keep HTTP concerns in `api.py`, response schemas in `services/`, and provider details in `providers/` and `router.py`.
+- Keep the application factory and middleware in `api.py`, and HTTP route handlers in the `api_routers_*.py` modules beside it; response schemas live in `services/`, and provider details in `providers/` and `router.py`.
 - Add tests for behaviour you change, and keep existing tests passing.
 - Do not hardcode a model list. The application discovers models from live provider metadata.
 - Preserve the split between the AI layer and the database layer: the AI proposes a consolidation plan (CREATE, MERGE, UPDATE, CONFLICT) and `project_memory.py` applies it while recording history events.
