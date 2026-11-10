@@ -37,6 +37,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 import api as api_module
+import api_routers_meetings as meetings_module
 import config_loader
 import database
 from config import DEFAULT_MODEL
@@ -757,8 +758,11 @@ class ExceptionExposureTests(unittest.TestCase):
             "completed_items": [],
             "in_progress_items": [],
         }
+        # Patched where the meeting handler imports it from, not where it
+        # used to be defined. Patching api.py would raise AttributeError,
+        # and a test that cannot set itself up is not a test.
         patcher = mock.patch.object(
-            api_module, "analyze_document", return_value=json.dumps(analysis)
+            meetings_module, "analyze_document", return_value=json.dumps(analysis)
         )
         patcher.start()
         self._patchers.append(patcher)
@@ -866,8 +870,12 @@ class ExceptionExposureTests(unittest.TestCase):
         def fail(*args, **kwargs):
             raise RuntimeError("consolidation hit /internal/v1 at 10.0.0.9")
 
+        # Patched where it is now imported, not where it used to live. The
+        # handler moved to api_routers_meetings, and patching api.py would
+        # raise AttributeError on the way to testing anything, which is a
+        # quieter failure than a wrong assertion but still no test.
         with mock.patch.object(
-            api_module.MemoryConsolidator, "consolidate", fail
+            meetings_module.MemoryConsolidator, "consolidate", fail
         ):
             response = self.client.post(
                 f"/api/projects/{project}/meetings",

@@ -24,8 +24,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import httpx
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -38,8 +37,6 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from analyzer import analyze_document, parse_analysis
-
 # The three analytics handlers, as a router. They share one discipline and
 # moved together because a change to it has to be made in all three.
 from api_analytics import router as analytics_router
@@ -51,6 +48,7 @@ from api_analytics import router as analytics_router
 from api_auth import (
     CredentialsIn,
     SetupIn,
+    UserFacingError,
     clear_auth_cookie,
     create_token,
     get_current_user,
@@ -62,22 +60,25 @@ from api_auth import (
     set_auth_cookie,
 )
 from api_deps import _get_project, install_deps
+from api_memory import (
+    get_available_models,
+)
+from api_routers_meetings import router as meetings_router
 
 # Serializers, moved out whole. They are pure functions over rows, so they
 # moved with no other change, and the route handlers below reach them
 # through this import rather than a copy that could drift.
 from api_serializers import (
+    REVIEW_ACTION_FAILED_MESSAGE,
     error_response,
     serialize_action,
     serialize_blocker,
     serialize_event,
-    serialize_meeting,
     serialize_project_summary,
     serialize_risk,
     serialize_state,
 )
-from api_uploads import _SyncUpload
-from config import DEFAULT_MODEL, DEFAULT_PROVIDER, EMBEDDING_MODEL, __version__
+from config import DEFAULT_MODEL, __version__
 from config_loader import (
     get_bootstrap_token,
     get_jwt_secret_key,
@@ -89,19 +90,9 @@ from database import (
     db,
     new_request_scope,
 )
-from document_parser import extract_text
-from matching import (
-    combine_plans,
-    downgrade_create_duplicates,
-    has_llm_findings,
-    normalize_title,
-    pre_match,
-)
-from memory_consolidator import MemoryConsolidator
 from models import (
     ActionItem,
     Blocker,
-    Decision,
     HistoryEvent,
     Meeting,
     Project,
@@ -111,11 +102,8 @@ from models import (
 )
 from project_memory import (
     _bounded,
-    apply_consolidation_plan,
-    apply_meeting_analysis,
     apply_review_create,
     apply_review_merge,
-    apply_state,
     review_model_class,
 )
 from report import build_status_report
@@ -125,46 +113,6 @@ from telemetry import REQUEST_ID_HEADER, configure_logging, new_request_id
 
 def _dt(value):
     return value.isoformat() if value else None
-
-# ---------------------------------------------------------------------------
-# Fixed operator-facing messages
-
-# Exceptions are logged, never echoed. A provider failure carries the
-# endpoint and status, and a database failure carries the statement, and
-# neither is something an anonymous caller should read. The caller gets
-# one of these instead; the log holds the cause with a request id.
-MODEL_LIST_UNAVAILABLE_MESSAGE = (
-    "The analysis service is temporarily unavailable. "
-    "Please try again shortly."
-)
-
-MEETING_SUBMIT_FAILED_MESSAGE = (
-    "This meeting could not be processed. "
-    "The meeting was not saved, so nothing was changed."
-)
-
-REVIEW_ACTION_FAILED_MESSAGE = (
-    "This review action could not be completed. Nothing was changed."
-)
-
-
-class UserFacingError(ValueError):
-    """
-    An error whose message was written for the person who triggered it.
-
-    The distinction matters because the handlers cannot return arbitrary
-    exception text: a provider failure carries the endpoint and status,
-    and a database failure carries the statement, and neither belongs in
-    a response. Validation failures have to reach the user though, or the
-    UI can only say "something went wrong" when the user simply forgot to
-    attach a file.
-
-    So validation raises this subclass, and only this subclass is echoed.
-    Everything else is logged and replaced with a fixed message. Because
-    this is a ValueError, any handler already catching ValueError keeps
-    working, which is what let the class be introduced without touching
-    the exception tuples.
-    """
 
 
 # ---------------------------------------------------------------------------
@@ -214,14 +162,6 @@ class PasswordResetIn(BaseModel):
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCKOUT_SECONDS = 15 * 60
 
-# Cache for the provider's model list, and the TTL applied to a failed
-# lookup so an unauthenticated /api/health cannot spend the app's rate
-# limit quota. Success is cached for the life of the process because the
-# list changes rarely; a failure is retried after this interval.
-MODELS_FAILURE_TTL_SECONDS = 60
-_models_cache: list | None = None
-_models_cache_failure_at: float | None = None
-
 # In-process login rate limiting: username -> (failures, first failure ts).
 _failed_logins: dict = {}
 
@@ -262,208 +202,6 @@ def _login_is_locked(username: str) -> bool:
 
 def _clear_failed_logins(username: str) -> None:
     _failed_logins.pop(username, None)
-
-
-# ---------------------------------------------------------------------------
-# Memory extraction (framework-independent, ported verbatim from app.py)
-
-
-def get_available_models(router):
-    # Dynamic discovery from the provider API. Used as a health check:
-    # the add-meeting form fails fast if the default model is missing.
-    #
-    # Failures are cached with a TTL. /api/health is unauthenticated, so
-    # without this every request burns a provider call, and once the
-    # provider starts rate limiting the app's own quota the first 429
-    # takes down every add-meeting request too.
-    global _models_cache, _models_cache_failure_at
-
-    if _models_cache is not None:
-        return _models_cache
-
-    now = time.monotonic()
-
-    if _models_cache_failure_at is not None:
-        if now - _models_cache_failure_at < MODELS_FAILURE_TTL_SECONDS:
-            raise RuntimeError("The model list is temporarily unavailable.")
-        # TTL expired: forget the failure and try again.
-        _models_cache_failure_at = None
-
-    try:
-        models = router.get_models(DEFAULT_PROVIDER)
-    except Exception as exception:
-        # Log the cause, return only a code: the response must not tell an
-        # anonymous caller anything about the provider, but an operator
-        # reading the logs needs to know whether this is a missing key, a
-        # rate limit or an unreachable host.
-        _models_cache_failure_at = now
-        logging.getLogger("ai-delivery-assistant.models").warning(
-            "model list unavailable: %s: %s",
-            type(exception).__name__,
-            exception,
-        )
-        raise RuntimeError("The model list could not be loaded.") from exception
-
-    _models_cache = models
-    return models
-
-
-def get_project_memory(project_id):
-    """
-    Extract the current project memory from the database.
-
-    All statuses are included, not only open ones: a resolved risk
-    re-mentioned in a later meeting is the same canonical entity and
-    must be reopened rather than duplicated.
-    """
-    memory = {
-        "risks": [],
-        "blockers": [],
-        "action_items": [],
-        "decisions": []
-    }
-
-    for risk in Risk.query.filter_by(project_id=project_id).all():
-        memory["risks"].append({
-            "id": risk.id,
-            "title": risk.title,
-            "canonical_title": risk.canonical_title,
-            "embedding": risk.title_embedding,
-            "description": risk.description,
-            "impact": risk.impact,
-            "mitigation": risk.mitigation,
-            "status": risk.status
-        })
-
-    for blocker in Blocker.query.filter_by(project_id=project_id).all():
-        memory["blockers"].append({
-            "id": blocker.id,
-            "title": blocker.title,
-            "canonical_title": blocker.canonical_title,
-            "embedding": blocker.title_embedding,
-            "description": blocker.description,
-            "status": blocker.status
-        })
-
-    for action in ActionItem.query.filter_by(project_id=project_id).all():
-        memory["action_items"].append({
-            "id": action.id,
-            "title": action.title,
-            "canonical_title": action.canonical_title,
-            "embedding": action.title_embedding,
-            "details": action.details,
-            "owner": action.owner,
-            "due_date": action.due_date.isoformat() if action.due_date else None,
-            "status": action.status
-        })
-
-    for decision in Decision.query.filter_by(project_id=project_id).all():
-        memory["decisions"].append({
-            "id": decision.id,
-            "title": decision.title,
-            "canonical_title": decision.canonical_title,
-            "embedding": decision.title_embedding,
-            "details": decision.details
-        })
-
-    return memory
-
-
-_MEMORY_MODEL_CLASSES = {
-    "risks": Risk,
-    "blockers": Blocker,
-    "action_items": ActionItem,
-    "decisions": Decision,
-}
-
-
-def ensure_item_embeddings(router, memory):
-    """
-    Embed items whose title_embedding is missing and persist the
-    vectors. Titles are stable, so each item is embedded once and
-    later meetings reuse the stored vector.
-
-    Embeddings are an enrichment layer: on any provider failure the
-    memory is returned unchanged and candidate matching falls back to
-    lexical similarity.
-    """
-    pending = []
-
-    for section in _MEMORY_MODEL_CLASSES:
-        for item in memory.get(section) or []:
-            canonical = item.get("canonical_title") or ""
-
-            if not item.get("embedding") and canonical.strip():
-                pending.append((section, item, canonical))
-
-    if not pending:
-        return memory
-
-    try:
-        vectors = router.embed_texts(
-            DEFAULT_PROVIDER,
-            EMBEDDING_MODEL,
-            [canonical for _, _, canonical in pending],
-        )
-    except (ValueError, RuntimeError, KeyError, TypeError, ConnectionError, TimeoutError):
-        # Silent degradation: lexical candidate ranking still works.
-        return memory
-
-    if len(vectors) != len(pending):
-        # The caller matches vectors to items positionally, so a short
-        # batch must not quietly leave some items unembedded.
-        return memory
-
-    for (section, item, _), vector in zip(pending, vectors):
-        item["embedding"] = vector
-
-        row = db.session.get(_MEMORY_MODEL_CLASSES[section], item["id"])
-
-        if row is not None:
-            row.title_embedding = vector
-
-    # No commit here. This helper runs in the middle of the caller's
-    # meeting transaction: committing would persist a meeting row whose
-    # analysis has not been applied yet, so a later rollback would leave
-    # a "ghost" meeting that also blocks re-submitting the same notes
-    # through the duplicate guard. The caller owns the transaction.
-
-    return memory
-
-
-def embed_finding_titles(router, analysis):
-    """
-    Embed the finding titles of a new analysis and return a mapping
-    of canonical title -> vector for pre_match. Never raises: without
-    embeddings the pre-match falls back to lexical candidates.
-    """
-    titles = []
-    seen = set()
-
-    for section in ("risks", "blockers", "action_items", "decisions"):
-        for finding in analysis.get(section) or []:
-            if not isinstance(finding, dict):
-                continue
-
-            title = normalize_title(finding.get("title"))
-
-            if title and title not in seen:
-                seen.add(title)
-                titles.append(title)
-
-    if not titles:
-        return {}
-
-    try:
-        vectors = router.embed_texts(DEFAULT_PROVIDER, EMBEDDING_MODEL, titles)
-    except (ValueError, RuntimeError, ConnectionError, TimeoutError):
-        return {}
-
-    return dict(zip(titles, vectors))
-
-
-# ---------------------------------------------------------------------------
-# Application factory
 
 
 def create_app(router_instance=None, database_url=None):
@@ -961,234 +699,6 @@ def create_app(router_instance=None, database_url=None):
             "needs_review_count": needs_review_count,
         }
 
-    @app.get("/api/projects/{project_id}/meetings")
-    def project_meetings(project_id: int, user: dict = Depends(get_current_user)):
-        project = _get_project(project_id)
-
-        return {
-            "project": serialize_project_summary(project),
-            "meetings": [serialize_meeting(m) for m in project.meetings],
-        }
-
-    @app.post("/api/projects/{project_id}/meetings", status_code=201)
-    def add_meeting(
-        project_id: int,
-        title: str = Form(""),
-        meeting_notes: str = Form(""),
-        meeting_file: UploadFile | None = None,
-        user: dict = Depends(get_current_user),
-    ):
-        project = _get_project(project_id)
-
-        try:
-            models = get_available_models(router)
-        except (ValueError, RuntimeError, httpx.HTTPError, httpx.TransportError) as exception:
-            # Provider failures arrive as httpx errors, not as ValueError:
-            # tenacity retries with reraise=True, so a 429 or a timeout
-            # surfaces the original HTTPStatusError/TimeoutException. Without
-            # those classes in the tuple this returned a bare 500.
-            #
-            # The exception text is logged and never returned: it carries
-            # the provider's URL and status, which tells an anonymous
-            # caller something about the infrastructure. The caller gets a
-            # fixed sentence instead, and the operator gets the cause.
-            logging.getLogger("ai-delivery-assistant.meetings").warning(
-                "model list unavailable for a meeting submission: %s: %s",
-                type(exception).__name__,
-                exception,
-            )
-            return error_response(MODEL_LIST_UNAVAILABLE_MESSAGE)
-
-        selected_model = DEFAULT_MODEL if DEFAULT_MODEL in models else None
-
-        if selected_model is None:
-            return error_response("The default model is currently unavailable.")
-
-        warning = None
-
-        try:
-            if meeting_file is not None and meeting_file.filename:
-                # document_parser.extract_text speaks the Flask
-                # FileStorage protocol (sync .read(), .filename); wrap
-                # the already-loaded upload bytes in that shape.
-                #
-                # This endpoint is sync on purpose: the pipeline below
-                # makes blocking LLM calls with a 180 s timeout each, and
-                # an async def would run it on the event loop, stalling
-                # every other request including /api/health. As a sync
-                # endpoint FastAPI runs it in the threadpool instead.
-                upload_bytes = meeting_file.file.read()
-                original_text = extract_text(_SyncUpload(meeting_file.filename, upload_bytes))
-                # The client controls this string, and source_filename is
-                # varchar(255), so a long name would fail on PostgreSQL.
-                source_filename = _bounded(meeting_file.filename, "source_filename")
-            elif meeting_notes.strip():
-                original_text, source_filename = meeting_notes.strip(), None
-            else:
-                raise UserFacingError("Upload meeting notes or paste meeting text.")
-
-            # Idempotency: re-submitting identical notes is a
-            # no-op rather than a second memory mutation.
-            duplicate_meeting = Meeting.query.filter_by(
-                project_id=project.id,
-                original_text=original_text,
-            ).first()
-
-            if duplicate_meeting is not None:
-                raise UserFacingError(
-                    f"Identical meeting notes already exist "
-                    f"({duplicate_meeting.title}, "
-                    f"{duplicate_meeting.created_at:%Y-%m-%d}). "
-                    f"No changes were applied."
-                )
-
-            analysis_text = analyze_document(original_text, DEFAULT_PROVIDER, selected_model, router)
-            analysis_json = parse_analysis(analysis_text)
-            meeting = Meeting(
-                project_id=project.id,
-                title=(title or "").strip() or "Untitled meeting",
-                source_filename=source_filename,
-                original_text=original_text,
-                analysis_text=analysis_text,
-                analysis_json=analysis_json,
-                provider=DEFAULT_PROVIDER,
-                model=selected_model,
-            )
-            db.session.add(meeting)
-            db.session.flush()
-
-            # Deterministic pre-matching resolves exact title
-            # duplicates without the LLM; the remaining findings go
-            # to the LLM with a candidate shortlist, and the LLM
-            # plan passes a duplicate check before being applied.
-            try:
-                existing_memory = get_project_memory(project.id)
-                ensure_item_embeddings(router, existing_memory)
-                finding_embeddings = embed_finding_titles(
-                    router, analysis_json
-                )
-                pre_matched = pre_match(
-                    existing_memory, analysis_json, finding_embeddings
-                )
-                llm_findings = pre_matched["llm_findings"]
-
-                if has_llm_findings(llm_findings):
-                    consolidator = MemoryConsolidator(router)
-                    consolidation_plan = consolidator.consolidate(
-                        existing_memory=existing_memory,
-                        new_analysis=llm_findings,
-                        provider=DEFAULT_PROVIDER,
-                        model=selected_model
-                    )
-                else:
-                    consolidation_plan = {
-                        "risks": [],
-                        "blockers": [],
-                        "action_items": [],
-                        "decisions": [],
-                    }
-
-                downgrade_create_duplicates(existing_memory, consolidation_plan)
-
-                apply_consolidation_plan(
-                    project,
-                    meeting,
-                    combine_plans(pre_matched["auto"], consolidation_plan),
-                )
-            except (
-                ValueError,
-                RuntimeError,
-                KeyError,
-                TypeError,
-                httpx.HTTPError,
-                httpx.TransportError,
-            ) as consolidation_error:
-                # Fallback to traditional analysis if consolidation fails.
-                # The httpx classes matter: without them a provider failure
-                # during consolidation escapes this handler entirely and the
-                # endpoint returns 500 instead of degrading to the
-                # deterministic path, which is what this branch documents.
-                #
-                # The cause goes to the log and not into the warning. The
-                # warning is part of the response, and the exception text
-                # carries the provider endpoint and status, or the failing
-                # statement, which is exactly what an anonymous caller
-                # should not read. The caller is told that the deterministic
-                # path was used; the operator is told why.
-                logging.getLogger("ai-delivery-assistant.meetings").warning(
-                    "consolidation fell back to standard analysis: %s: %s",
-                    type(consolidation_error).__name__,
-                    consolidation_error,
-                    exc_info=True,
-                )
-                warning = (
-                    "Note: Consolidation encountered an issue, "
-                    "so standard analysis was used instead."
-                )
-                apply_meeting_analysis(project, meeting, analysis_json)
-            else:
-                # The consolidation path only reconciles individual
-                # memory items: apply the meeting status and progress
-                # explicitly (previously they were silently dropped).
-                apply_state(project, meeting, analysis_json)
-
-            db.session.commit()
-
-            response = {"meeting_id": meeting.id}
-
-            if warning:
-                response["warning"] = warning  # type: ignore[assignment]
-
-            return response
-        except (
-            ValueError,
-            RuntimeError,
-            SQLAlchemyError,
-            httpx.HTTPError,
-            httpx.TransportError,
-        ) as exception:
-            # SQLAlchemyError is in the tuple on purpose. SQLite does not
-            # enforce varchar(n), so a too-long value from an LLM (or a
-            # long upload filename) is only caught on a real PostgreSQL,
-            # where it raises DataError. Without this, that surface is a
-            # 500 instead of a 400, and the session is left dirty. The
-            # httpx classes cover a provider failure that escapes the
-            # inner handler.
-            db.session.rollback()
-
-            # The two raises inside this block carry messages written for
-            # the user, so they are returned. Everything else is either a
-            # provider failure or an internal error whose text says where
-            # the stack lives, and that goes to the log only.
-            if isinstance(exception, UserFacingError):
-                return error_response(str(exception))
-
-            logging.getLogger("ai-delivery-assistant.meetings").warning(
-                "meeting submission failed: %s: %s",
-                type(exception).__name__,
-                exception,
-                exc_info=True,
-            )
-            return error_response(MEETING_SUBMIT_FAILED_MESSAGE)
-
-    @app.get("/api/meetings/{meeting_id}")
-    def meeting_detail(meeting_id: int, user: dict = Depends(get_current_user)):
-        meeting = db.session.get(Meeting, meeting_id)
-
-        if meeting is None:
-            raise HTTPException(status_code=404, detail="Meeting not found")
-
-        events = (
-            HistoryEvent.query.filter_by(meeting_id=meeting.id)
-            .order_by(HistoryEvent.id)
-            .all()
-        )
-
-        return {
-            "meeting": serialize_meeting(meeting, detail=True),
-            "events": [serialize_event(event) for event in events],
-        }
-
     @app.get("/api/projects/{project_id}/history")
     def project_history(
         project_id: int,
@@ -1504,6 +1014,7 @@ def create_app(router_instance=None, database_url=None):
     # never be reached. Keeping the include above the fallback is what
     # makes that ordering hard to get wrong.
     app.include_router(analytics_router)
+    app.include_router(meetings_router)
 
     # Serve the React production bundle. A file in frontend/dist wins
     # (hashed assets); any other path falls back to index.html so the

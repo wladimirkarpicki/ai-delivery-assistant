@@ -33,6 +33,30 @@ from models import RevokedToken, User
 
 _bearer = HTTPBearer(auto_error=False)
 
+
+class UserFacingError(ValueError):
+    """
+    An error whose message was written for the person who triggered it.
+
+    The distinction matters because handlers cannot return arbitrary
+    exception text: a provider failure carries the endpoint and status,
+    and a database failure carries the statement, and neither belongs in
+    a response. Validation failures have to reach the user though, or the
+    UI can only say "something went wrong" when the user simply forgot to
+    attach a file.
+
+    So validation raises this subclass, and only this subclass is echoed.
+    Everything else is logged and replaced with a fixed message. Because
+    this is a ValueError, any handler already catching ValueError keeps
+    working, which is what let the class be introduced without touching
+    the exception tuples.
+
+    It lives here rather than in api.py because more than one router needs
+    it, and a router importing api.py would be a cycle: api.py imports the
+    routers.
+    """
+
+
 COOKIE_NAME = "aida_token"
 COOKIE_PATH = "/"
 COOKIE_SAMESITE = "strict"

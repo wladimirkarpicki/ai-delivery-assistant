@@ -143,3 +143,30 @@ def serialize_state(state):
 
 def error_response(message, status_code=400):
     return JSONResponse(status_code=status_code, content={"error": message})
+
+
+# ---------------------------------------------------------------------------
+# Fixed operator-facing messages
+
+# Exceptions are logged, never echoed. A provider failure carries the
+# endpoint and status, a database failure carries the statement, and
+# neither is something an anonymous caller should read. The caller gets one
+# of these instead; the log holds the cause with a request id.
+#
+# They live beside error_response because that is the only function that
+# returns them, and a router module needs them without importing api.py:
+# api.py imports the routers, so an import back the other way would be a
+# cycle.
+MODEL_LIST_UNAVAILABLE_MESSAGE = (
+    "The analysis service is temporarily unavailable. "
+    "Please try again shortly."
+)
+
+MEETING_SUBMIT_FAILED_MESSAGE = (
+    "This meeting could not be processed. "
+    "The meeting was not saved, so nothing was changed."
+)
+
+REVIEW_ACTION_FAILED_MESSAGE = (
+    "This review action could not be completed. Nothing was changed."
+)
