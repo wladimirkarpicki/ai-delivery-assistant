@@ -1,0 +1,222 @@
+﻿ï»¿2026-11-10T17:57:46.6951459Z Current runner version: '2.338.2'
+2026-11-10T17:57:46.6973007Z ##[group]Runner Image Provisioner
+2026-11-10T17:57:46.6973782Z Hosted Compute Agent
+2026-11-10T17:57:46.6974327Z Version: 20261028.624
+2026-11-10T17:57:46.6974828Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+2026-11-10T17:57:46.6975521Z Build Date: 2026-10-28T21:51:42Z
+2026-11-10T17:57:46.6976079Z Worker ID: {016c863d-cc3b-4048-9c43-b7c9783ec578}
+2026-11-10T17:57:46.6976684Z Region: westus3
+2026-11-10T17:57:46.6977171Z Cloud: Azure
+2026-11-10T17:57:46.6977623Z ##[endgroup]
+2026-11-10T17:57:46.6979094Z ##[group]Operating System
+2026-11-10T17:57:46.6979615Z Ubuntu
+2026-11-10T17:57:46.6980102Z 26.04.1
+2026-11-10T17:57:46.6980537Z LTS
+2026-11-10T17:57:46.6980965Z ##[endgroup]
+2026-11-10T17:57:46.6981486Z ##[group]Runner Image
+2026-11-10T17:57:46.6981983Z Image: ubuntu-26.04
+2026-11-10T17:57:46.6982441Z Version: 20261101.186.1
+2026-11-10T17:57:46.6983532Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261101.186/images/ubuntu/Ubuntu2604-Readme.md
+2026-11-10T17:57:46.6984806Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261101.186
+2026-11-10T17:57:46.6985572Z ##[endgroup]
+2026-11-10T17:57:46.6986872Z ##[group]GITHUB_TOKEN Permissions
+2026-11-10T17:57:46.6988475Z Contents: read
+2026-11-10T17:57:46.6989191Z Metadata: read
+2026-11-10T17:57:46.6989812Z ##[endgroup]
+2026-11-10T17:57:46.6991580Z Secret source: Actions
+2026-11-10T17:57:46.6992412Z Cache mode: write
+2026-11-10T17:57:46.6992972Z Prepare workflow directory
+2026-11-10T17:57:46.7322199Z Prepare all required actions
+2026-11-10T17:57:46.7364587Z Getting action download info
+2026-11-10T17:57:47.0187971Z Download action repository 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-11-10T17:57:47.1649115Z Download action repository 'pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1' (SHA:b906affcce14559ad1aafd4ab0e942779e9f58b1)
+2026-11-10T17:57:47.9606752Z Complete job name: Frontend Audit (pnpm audit)
+2026-11-10T17:57:48.0316227Z ##[group]Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+2026-11-10T17:57:48.0317138Z with:
+2026-11-10T17:57:48.0317608Z   repository: wladimirkarpicki/ai-delivery-assistant
+2026-11-10T17:57:48.0321418Z   token: ***
+2026-11-10T17:57:48.0321817Z   ssh-strict: true
+2026-11-10T17:57:48.0322211Z   ssh-user: git
+2026-11-10T17:57:48.0322610Z   persist-credentials: true
+2026-11-10T17:57:48.0323057Z   clean: true
+2026-11-10T17:57:48.0323452Z   sparse-checkout-cone-mode: true
+2026-11-10T17:57:48.0323904Z   fetch-depth: 1
+2026-11-10T17:57:48.0324290Z   fetch-tags: false
+2026-11-10T17:57:48.0324682Z   show-progress: true
+2026-11-10T17:57:48.0325076Z   lfs: false
+2026-11-10T17:57:48.0325454Z   submodules: false
+2026-11-10T17:57:48.0325865Z   set-safe-directory: true
+2026-11-10T17:57:48.0326318Z   allow-unsafe-pr-checkout: false
+2026-11-10T17:57:48.0326983Z ##[endgroup]
+2026-11-10T17:57:48.3253531Z Syncing repository: wladimirkarpicki/ai-delivery-assistant
+2026-11-10T17:57:48.3255295Z ##[group]Getting Git version info
+2026-11-10T17:57:48.3256088Z Working directory is '/home/runner/work/ai-delivery-assistant/ai-delivery-assistant'
+2026-11-10T17:57:48.3257141Z [command]/usr/bin/git version
+2026-11-10T17:57:48.3282450Z git version 2.56.0
+2026-11-10T17:57:48.3305776Z ##[endgroup]
+2026-11-10T17:57:48.3312307Z Temporarily overriding HOME='/home/runner/work/_temp/b3db4249-1edd-4957-9fe8-61b4c1a1ef47' before making global git config changes
+2026-11-10T17:57:48.3314288Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-10T17:57:48.3317223Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ai-delivery-assistant/ai-delivery-assistant
+2026-11-10T17:57:48.3373538Z Deleting the contents of '/home/runner/work/ai-delivery-assistant/ai-delivery-assistant'
+2026-11-10T17:57:48.3382358Z ##[group]Initializing the repository
+2026-11-10T17:57:48.3386600Z [command]/usr/bin/git init /home/runner/work/ai-delivery-assistant/ai-delivery-assistant
+2026-11-10T17:57:48.4031973Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-10T17:57:48.4033054Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-10T17:57:48.4034068Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-10T17:57:48.4034788Z hint: call:
+2026-11-10T17:57:48.4035258Z hint:
+2026-11-10T17:57:48.4035881Z hint: 	git config --global init.defaultBranch <name>
+2026-11-10T17:57:48.4036596Z hint:
+2026-11-10T17:57:48.4037162Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-10T17:57:48.4038729Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-10T17:57:48.4039826Z hint:
+2026-11-10T17:57:48.4040456Z hint: 	git branch -m <name>
+2026-11-10T17:57:48.4041194Z hint:
+2026-11-10T17:57:48.4042041Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-10T17:57:48.4043629Z Initialized empty Git repository in /home/runner/work/ai-delivery-assistant/ai-delivery-assistant/.git/
+2026-11-10T17:57:48.4061216Z [command]/usr/bin/git remote add origin https://github.com/wladimirkarpicki/ai-delivery-assistant
+2026-11-10T17:57:48.4106525Z ##[endgroup]
+2026-11-10T17:57:48.4107227Z ##[group]Disabling automatic garbage collection
+2026-11-10T17:57:48.4110507Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-10T17:57:48.4153644Z ##[endgroup]
+2026-11-10T17:57:48.4154538Z ##[group]Setting up auth
+2026-11-10T17:57:48.4163876Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-10T17:57:48.4192076Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-10T17:57:48.4530205Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-10T17:57:48.4561037Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-10T17:57:48.4800906Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-10T17:57:48.4831549Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-10T17:57:48.5072199Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-10T17:57:48.5108841Z ##[endgroup]
+2026-11-10T17:57:48.5109559Z ##[group]Fetching the repository
+2026-11-10T17:57:48.5116444Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +c06cfd33119134a500a6f0ebd86d99f9ed3c8897:refs/remotes/origin/main
+2026-11-10T17:57:49.2411365Z From https://github.com/wladimirkarpicki/ai-delivery-assistant
+2026-11-10T17:57:49.2413448Z  * [new ref]         c06cfd33119134a500a6f0ebd86d99f9ed3c8897 -> origin/main
+2026-11-10T17:57:49.2417049Z ##[endgroup]
+2026-11-10T17:57:49.2418746Z ##[group]Determining the checkout info
+2026-11-10T17:57:49.2420560Z ##[endgroup]
+2026-11-10T17:57:49.2423882Z [command]/usr/bin/git sparse-checkout disable
+2026-11-10T17:57:49.2466346Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-10T17:57:49.2492503Z ##[group]Checking out the ref
+2026-11-10T17:57:49.2502234Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-11-10T17:57:49.2612322Z Switched to a new branch 'main'
+2026-11-10T17:57:49.2616513Z branch 'main' set up to track 'origin/main'.
+2026-11-10T17:57:49.2622724Z ##[endgroup]
+2026-11-10T17:57:49.2657080Z [command]/usr/bin/git log -1 --format=%H
+2026-11-10T17:57:49.2680117Z c06cfd33119134a500a6f0ebd86d99f9ed3c8897
+2026-11-10T17:57:49.2961291Z ##[group]Run pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+2026-11-10T17:57:49.2962813Z with:
+2026-11-10T17:57:49.2963518Z   version: 11.7.0
+2026-11-10T17:57:49.2964290Z   dest: ~/setup-pnpm
+2026-11-10T17:57:49.2965084Z   run_install: null
+2026-11-10T17:57:49.2965851Z   cache: false
+2026-11-10T17:57:49.2966673Z   cache_dependency_path: pnpm-lock.yaml
+2026-11-10T17:57:49.2967733Z   package_json_file: package.json
+2026-11-10T17:57:49.2968787Z   standalone: false
+2026-11-10T17:57:49.2969573Z ##[endgroup]
+2026-11-10T17:57:49.4147765Z ##[group]Running self-installer...
+2026-11-10T17:57:49.9656962Z (node:2199) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-11-10T17:57:49.9663007Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-10T17:57:50.1340768Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-11-10T17:57:50.1414300Z Packages: +1
+2026-11-10T17:57:50.1415383Z +
+2026-11-10T17:57:50.5517388Z Progress: resolved 1, reused 0, downloaded 1, added 1, done
+2026-11-10T17:57:50.7368270Z 
+2026-11-10T17:57:50.7369156Z dependencies:
+2026-11-10T17:57:50.7369648Z + pnpm 11.7.0 (12.18.0 is available)
+2026-11-10T17:57:50.7369939Z 
+2026-11-10T17:57:50.7447479Z Done in 1.1s
+2026-11-10T17:57:50.9421837Z ##[endgroup]
+2026-11-10T17:57:50.9422334Z Installation Completed!
+2026-11-10T17:57:50.9550219Z ##[group]Run pnpm install --frozen-lockfile
+2026-11-10T17:57:50.9550579Z [36;1mpnpm install --frozen-lockfile[0m
+2026-11-10T17:57:50.9601610Z shell: /usr/bin/bash -e {0}
+2026-11-10T17:57:50.9601887Z env:
+2026-11-10T17:57:50.9602140Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-11-10T17:57:50.9602402Z ##[endgroup]
+2026-11-10T17:57:55.0834166Z ? Verifying lockfile against supply-chain policies (256 entries)...
+2026-11-10T17:57:55.0930722Z Lockfile is up to date, resolution step is skipped
+2026-11-10T17:57:55.1791467Z Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-11-10T17:57:55.1973328Z Packages: +162
+2026-11-10T17:57:55.1998448Z ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+2026-11-10T17:57:56.2059448Z Progress: resolved 162, reused 0, downloaded 103, added 14
+2026-11-10T17:57:56.7099386Z Progress: resolved 162, reused 0, downloaded 162, added 162, done
+2026-11-10T17:57:57.3390378Z â Lockfile passes supply-chain policies (256 entries in 2.2s)
+2026-11-10T17:57:57.3656228Z .../esbuild@0.28.2/node_modules/esbuild postinstall$ node install.js
+2026-11-10T17:57:57.5917894Z .../esbuild@0.28.2/node_modules/esbuild postinstall: Done
+2026-11-10T17:57:57.7724828Z 
+2026-11-10T17:57:57.7725353Z dependencies:
+2026-11-10T17:57:57.7725768Z + react 19.3.1
+2026-11-10T17:57:57.7726057Z + react-dom 19.3.1
+2026-11-10T17:57:57.7726342Z + react-router-dom 7.18.4
+2026-11-10T17:57:57.7726675Z + recharts 3.10.1
+2026-11-10T17:57:57.7739110Z 
+2026-11-10T17:57:57.7739554Z devDependencies:
+2026-11-10T17:57:57.7749038Z + @testing-library/jest-dom 6.9.1
+2026-11-10T17:57:57.7749532Z + @testing-library/react 16.3.3
+2026-11-10T17:57:57.7749843Z + @types/react 19.3.0
+2026-11-10T17:57:57.7750145Z + @types/react-dom 19.3.0
+2026-11-10T17:57:57.7750378Z + @vitejs/plugin-react 6.2.1
+2026-11-10T17:57:57.7750575Z + esbuild 0.28.2
+2026-11-10T17:57:57.7750739Z + jsdom 31.0.0
+2026-11-10T17:57:57.7750960Z + typescript 7.0.2
+2026-11-10T17:57:57.7751212Z + vite 8.3.6
+2026-11-10T17:57:57.7751421Z + vitest 3.2.7
+2026-11-10T17:57:57.7751520Z 
+2026-11-10T17:57:57.8702762Z Done in 4.2s using pnpm v11.7.0
+2026-11-10T17:57:57.9675560Z ##[group]Run pnpm audit --audit-level=high
+2026-11-10T17:57:57.9675871Z [36;1mpnpm audit --audit-level=high[0m
+2026-11-10T17:57:57.9721710Z shell: /usr/bin/bash -e {0}
+2026-11-10T17:57:57.9721921Z env:
+2026-11-10T17:57:57.9722132Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+2026-11-10T17:57:57.9722388Z ##[endgroup]
+2026-11-10T17:57:58.5532258Z âââââââââââââââââââââââ¬âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+2026-11-10T17:57:58.5533000Z â critical            â Tinypool: Prototype Pollution gadget in worker options â
+2026-11-10T17:57:58.5534341Z â                     â leads to Remote Code Execution                         â
+2026-11-10T17:57:58.5535050Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5535655Z â Package             â tinypool                                               â
+2026-11-10T17:57:58.5536234Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5536948Z â Vulnerable versions â <=2.1.0                                                â
+2026-11-10T17:57:58.5537583Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5538134Z â Patched versions    â >=2.1.1                                                â
+2026-11-10T17:57:58.5538895Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5539466Z â Paths               â .>vitest>tinypool                                      â
+2026-11-10T17:57:58.5540134Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5540837Z â More info           â https://github.com/advisories/GHSA-5gmw-xhrv-c9v3      â
+2026-11-10T17:57:58.5541549Z âââââââââââââââââââââââ´âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+2026-11-10T17:57:58.5542191Z âââââââââââââââââââââââ¬âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+2026-11-10T17:57:58.5542845Z â critical            â Tinypool: Prototype Pollution Gadget to RCE in run()   â
+2026-11-10T17:57:58.5543465Z â                     â options                                                â
+2026-11-10T17:57:58.5544080Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5544639Z â Package             â tinypool                                               â
+2026-11-10T17:57:58.5545237Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5545871Z â Vulnerable versions â <2.1.2                                                 â
+2026-11-10T17:57:58.5546532Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5547081Z â Patched versions    â >=2.1.2                                                â
+2026-11-10T17:57:58.5547696Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5548385Z â Paths               â .>vitest>tinypool                                      â
+2026-11-10T17:57:58.5549088Z âââââââââââââââââââââââ¼âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ¤
+2026-11-10T17:57:58.5549682Z â More info           â https://github.com/advisories/GHSA-85c8-ppgw-ccpr      â
+2026-11-10T17:57:58.5550384Z âââââââââââââââââââââââ´âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+2026-11-10T17:57:58.5550841Z 5 vulnerabilities found
+2026-11-10T17:57:58.5551147Z Severity: 3 moderate | 2 critical
+2026-11-10T17:57:58.5719983Z ##[error]Process completed with exit code 1.
+2026-11-10T17:57:58.5802946Z Post job cleanup.
+2026-11-10T17:57:58.6954224Z Pruning is unnecessary.
+2026-11-10T17:57:58.7172650Z Post job cleanup.
+2026-11-10T17:57:58.7897604Z [command]/usr/bin/git version
+2026-11-10T17:57:58.7935072Z git version 2.56.0
+2026-11-10T17:57:58.7966028Z Temporarily overriding HOME='/home/runner/work/_temp/aeef3a8b-7ec5-41c7-8efa-bdbc78417933' before making global git config changes
+2026-11-10T17:57:58.7967103Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-10T17:57:58.7971191Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ai-delivery-assistant/ai-delivery-assistant
+2026-11-10T17:57:58.8010472Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-10T17:57:58.8044698Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-10T17:57:58.8322908Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-10T17:57:58.8346678Z http.https://github.com/.extraheader
+2026-11-10T17:57:58.8356079Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-11-10T17:57:58.8393019Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-10T17:57:58.8674140Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-10T17:57:58.8738075Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-10T17:57:58.9111281Z Cleaning up orphan processes
+2026-11-10T17:57:58.9446073Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11d5960a326750d5838078e36cf38b85af677262, pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+
