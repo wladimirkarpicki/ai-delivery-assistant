@@ -1020,6 +1020,54 @@ class RevocationPersistenceTests(unittest.TestCase):
 
         self.assertEqual(len(db.session.query(RevokedToken).all()), 1)
 
+    def test_prune_returns_the_count_it_removed(self):
+        """
+        The return value of the prune, which no test reads.
+
+        `test_expired_rows_are_pruned_on_logout` asserts the table contents
+        after a logout, which covers the deletion but not the count the
+        function reports. A prune that silently removed nothing would still
+        pass that test as long as nothing needed removing.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from api_auth import prune_revoked_rows
+        from models import RevokedToken
+
+        for offset in (1, 2, 40):
+            db.session.add(
+                RevokedToken(
+                    jti=f"old-{offset}", expires_at=datetime.now(UTC) - timedelta(days=offset)
+                )
+            )
+        db.session.commit()
+
+        self.assertEqual(prune_revoked_rows(), 3)
+        # A second prune has nothing left to remove.
+        self.assertEqual(prune_revoked_rows(), 0)
+
+    def test_bounded_rejects_a_column_limit_violation(self):
+        """
+        The clamp that keeps a varchar from overflowing, unpinned directly.
+
+        The overflow path is only exercised through PostgreSQL, which the
+        unit tests cannot reach, so the clamp's own behaviour was unverified
+        in the suite that runs in CI.
+        """
+        from project_memory import COLUMN_LIMITS, _bounded
+
+        self.assertEqual(_bounded("x" * 500, "title"), "x" * 300)
+        self.assertEqual(_bounded("short", "title"), "short")
+        self.assertEqual(_bounded(None, "title"), None)
+
+        # Every column the map claims must match a column that exists, or the
+        # clamp is guarding a column that was renamed away.
+        from models import Decision, Risk
+
+        for model in (Risk, Decision):
+            for column in ("title", "canonical_title", "status"):
+                self.assertIn(column, COLUMN_LIMITS)
+
 
 class ActivityTimelineTests(unittest.TestCase):
     """
