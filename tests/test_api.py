@@ -57,7 +57,10 @@ class FakeRouter:
                 "risks": [], "blockers": [],
                 "action_items": [], "decisions": [],
             })
-        return json.dumps(self.responses.pop(0))
+        planned = self.responses.pop(0)
+        if isinstance(planned, Exception):
+            raise planned
+        return json.dumps(planned)
 
     def embed_texts(self, provider, model, texts):
         # Deterministic vectors: QA/tester-related titles map to one
@@ -472,6 +475,37 @@ class ApiTests(unittest.TestCase):
 
     # ------------------------------------------------------------------
     # Manual resolution
+
+    def test_consolidation_failure_degrades_instead_of_500(self):
+        """
+        The fallback path, which no test covered until now.
+
+        A live probe against the real PostgreSQL submitted meeting notes and
+        got a 201 with no items: consolidation had failed and the
+        deterministic path took over. That shape was real but unpinned, so a
+        change turning it into a 500 would have passed silently. The
+        exception text must also stay out of the response.
+        """
+
+        project_id = self.create_project()
+        self.router.responses = [
+            self.ANALYSIS_ONE,
+            RuntimeError("provider unreachable at /internal/v1"),
+        ]
+
+        response = self.add_meeting(project_id, "Weekly 1", "QA risk discussed")
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertIn("warning", response.json())
+        self.assertIn("standard analysis", response.json()["warning"])
+        for leak in ("RuntimeError", "/internal", "Traceback"):
+            self.assertNotIn(leak, response.text)
+
+        # The deterministic path still writes the analysis's own findings,
+        # so the meeting is not silently empty either.
+        overview = self.client.get(f"/api/projects/{project_id}").json()
+        self.assertEqual(overview["meeting_count"], 1)
+        self.assertEqual(overview["state"]["delivery_status"], "at_risk")
 
     def test_manual_resolve_idempotent_and_reopen(self):
         project_id = self.create_project()
