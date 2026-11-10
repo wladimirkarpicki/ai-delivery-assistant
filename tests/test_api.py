@@ -360,6 +360,35 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["meeting"]["source_filename"], "notes.txt")
         self.assertEqual(body["meeting"]["original_text"], "QA risk discussed")
 
+    def test_docx_that_is_a_zip_without_the_required_member_is_a_400(self):
+        """
+        A structurally valid ZIP without the member the parser needs.
+
+        This class survived every earlier check because the two adjacent
+        cases both answer correctly: content that is not a ZIP at all, and
+        a broken PDF stream. A ZIP that opens cleanly but has no
+        [Content_Types].xml is its own shape, and it used to escape as a
+        500 because the ValueError raised for it was thrown from inside
+        the try block whose except clause was written for BadZipFile.
+        """
+
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            archive.writestr("word/document.xml", "<w:document/>")
+
+        project_id = self.create_project()
+        response = self.client.post(
+            f"/api/projects/{project_id}/meetings",
+            data={"title": "Broken zip", "meeting_notes": ""},
+            files={"meeting_file": ("bad.docx", buffer.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+        )
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("error", response.json())
+
     def test_second_meeting_resolves_items_deterministically(self):
         project_id = self.create_project()
         self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE, self.ANALYSIS_TWO]

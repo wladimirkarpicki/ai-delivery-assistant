@@ -125,13 +125,19 @@ def _extract_docx(uploaded_file):
     try:
         with zipfile.ZipFile(uploaded_file) as archive:
             names = set(archive.namelist())
-
-        if DOCX_REQUIRED_MEMBER not in names:
-            raise ValueError(
-                "The uploaded .docx is missing its content description."
-            )
     except zipfile.BadZipFile as exc:
         raise ValueError("The uploaded .docx could not be opened.") from exc
+
+    # Raised outside the try above, deliberately: the try exists to
+    # translate BadZipFile, and a "member is missing" ValueError raised
+    # inside it would be caught by an except that is not meant for it,
+    # or worse, re-wrapped into a misleading message. A structurally valid
+    # archive without the member it needs is its own error and must reach
+    # the caller as the 400 it already is.
+    if DOCX_REQUIRED_MEMBER not in names:
+        raise ValueError(
+            "The uploaded .docx is missing its content description."
+        )
 
     try:
         document = Document(uploaded_file)
@@ -140,7 +146,13 @@ def _extract_docx(uploaded_file):
             for paragraph in document.paragraphs
             if paragraph.text.strip()
         ]
-    except (zipfile.BadZipFile, KeyError, ValueError, TypeError) as exc:
+    except (zipfile.BadZipFile, KeyError, ValueError, TypeError, AttributeError) as exc:
+        # AttributeError is in the tuple for a shape the guard above cannot
+        # see: a docx whose word/document.xml is well-formed enough to pass
+        # the archive checks but too thin for python-docx, which reaches
+        # into lxml and raises AttributeError on an element it expected to
+        # be a package part. Every other malformed upload becomes a 400;
+        # this one was escaping as a 500.
         raise ValueError("The uploaded .docx could not be read.") from exc
 
     result = "\n\n".join(paragraphs).strip()
