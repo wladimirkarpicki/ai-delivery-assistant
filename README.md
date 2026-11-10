@@ -235,8 +235,24 @@ The same input has been observed to answer 200 and then 500 across runs, so the 
 
 ## Project structure
 
+The application is a modular monolith: `api.py` is the factory and
+middleware only, and the routes live in `api_*.py` modules beside it.
+The split exists because the auth state was originally a set of closures
+inside the factory, which made every other module impossible to import;
+the reasoning and the alternative that was rejected are in
+[docs/REFACTORING-PLAN.md](docs/REFACTORING-PLAN.md).
+
 ```text
-api.py                 FastAPI application: JSON API, static assets, SPA fallback
+api.py                 App factory, CORS and security middleware, request scope, SPA fallback
+api_auth.py            JWT sessions, token revocation, the request bodies they validate
+api_deps.py            Shared dependencies (`get_current_user`, `_get_project`, `get_router`)
+api_memory.py          Memory extraction and model-list discovery, with its failure TTL
+api_serializers.py     Row-to-dict serializers, and the fixed operator-facing messages
+api_uploads.py         Upload adapter over in-memory bytes
+api_analytics.py       Router: dashboard, cross-project metrics, Prometheus exposition
+api_routers_auth.py    Router: authentication and account administration
+api_routers_items.py   Router: review queue and manual item resolution
+api_routers_meetings.py Router: submitting meeting notes, reading one back
 frontend/              React + TypeScript SPA (Vite) rendering the same UI
 analyzer.py            Meeting-note analysis prompt and orchestration
 config.py              Default provider and model configuration
