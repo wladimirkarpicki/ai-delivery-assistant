@@ -402,7 +402,14 @@ Every business endpoint requires a signed-in account; sessions are stateless JWT
 Run the application test suite with:
 
 ```powershell
-python -m pytest tests/test_api.py
+python -m pytest
+```
+
+The frontend has its own suite, run by CI on every push:
+
+```powershell
+cd frontend
+pnpm test
 ```
 
 The repository also includes independent development/testing code for the memory consolidation layer as that feature evolves.
