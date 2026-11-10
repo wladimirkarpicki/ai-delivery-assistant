@@ -25,6 +25,6 @@ pypdf==6.21.4
 
 # Dev tooling
 pytest==9.1.1
-coverage==7.16.2
+coverage==7.17.2
 black==26.10.1
 ruff==0.17.1
