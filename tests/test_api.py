@@ -519,6 +519,47 @@ class ApiTests(unittest.TestCase):
         queue = self.client.get(f"/api/projects/{project_id}/review").json()
         self.assertEqual(queue["queue"], [])
 
+    def test_review_resolve_link(self):
+        """
+        The link action, the last resolve shape no test drove.
+
+        Its distinguishing behaviour is the target check: it must refuse a
+        target outside the project rather than merging it in. That check is
+        the point of the branch and what would regress silently, since a
+        link that ignored the project would still answer 200.
+        """
+        from project_memory import apply_consolidation_plan
+
+        project_id = self.create_project()
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
+        self.assertEqual(self.add_meeting(project_id, "Weekly 1", "QA risk discussed").status_code, 201)
+
+        conflict_plan = {
+            "risks": [{"decision": "CONFLICT", "new_item": {
+                "title": "Vendor lock-in", "description": "Contradictory info",
+                "impact": "high", "mitigation": "Unknown", "status": "open",
+            }, "reason": "contradicts existing memory"}],
+            "blockers": [], "action_items": [], "decisions": [],
+        }
+        meeting = db.session.query(Meeting).one()
+        project = db.session.get(Project, project_id)
+        apply_consolidation_plan(project, meeting, conflict_plan)
+        db.session.commit()
+
+        queue = self.client.get(f"/api/projects/{project_id}/review").json()
+        self.assertTrue(queue["queue"], "the CONFLICT item should be pending")
+        event_id = queue["queue"][0]["event"]["id"]
+
+        outside = self.client.post(
+            f"/api/projects/{project_id}/review/{event_id}/resolve",
+            json={"action": "link", "target_item_id": 999999},
+        )
+        self.assertIn(outside.status_code, (400, 409), outside.text)
+
+        # A refused link leaves the event pending, since nothing was applied.
+        queue = self.client.get(f"/api/projects/{project_id}/review").json()
+        self.assertTrue(queue["queue"], "a refused link must not consume the event")
+
     # ------------------------------------------------------------------
     # Manual resolution
 
