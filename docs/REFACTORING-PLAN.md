@@ -89,7 +89,7 @@ The live container also had a second reason it could not prove anything:
 its database volume was already initialised, so `schema.sql` was never
 loaded and the table did not exist in the running database at all.
 
-The blocker to closing this is disk space, not code. The `C:` drive had
+The blocker to closing it is disk space, not code. The `C:` drive had
 28 MB free of 75.2 GB, which is why Docker Desktop answered `unable to
 start` — its WSL vhdx had no room to operate. Safe caches were emptied for
 1.39 GB (npm, uv, pip, 15k stale temp files, browser caches) and Docker was
@@ -101,10 +101,27 @@ mine to remove: `hermes` (4.97 GB, a third-party agent with an update lock
 dated today) and the OS directories `WinSxS` (8.36 GB) and `System32`
 (4.81 GB).
 
-To close it: free several GB, then `docker builder prune -af`, re-pull
-`node:22-alpine` and `python:3.13-slim`, `docker compose build` from HEAD,
-confirm `revoked_tokens` exists in the fresh database, and run the live
-login/logout/restart probe.
+**Proven against the host PostgreSQL 18.4 instead.** Docker could not
+start, so the verification ran against the host server, which is the same
+engine class and a real PostgreSQL rather than the test harness:
+
+- `alembic upgrade head` on it applied `c2f6b8d4a1e9` (users) and
+  `d4e7f1a2b3c5` (revoked tokens) and the database ended at `d4e7f1a2b3c5`,
+  which also exercises the migration chain rather than only `schema.sql`.
+- `revoked_tokens` exists with `jti varchar` and
+  `expires_at timestamp with time zone`, matching the model.
+- The live probe: setup 200, login 200, token 189 chars, `/api/auth/me`
+  200; logout 200; `/api/auth/me` 401 in the same process; the process was
+  killed and a new one started with an empty cache, and `/api/auth/me`
+  401 again, while login still worked. The row was in the table, so the
+  answer came from PostgreSQL and not from memory.
+
+The remaining gap is therefore not the fix but the artifact: the compose
+stack has not been rebuilt from HEAD and its own container database has
+not been shown to boot from `schema.sql` with `revoked_tokens` present.
+To close that: free several GB, then `docker builder prune -af`, re-pull
+`node:22-alpine` and `python:3.13-slim`, `docker compose build`, and run
+the same probe through the published port.
 
 ## Explicit non-goals
 
