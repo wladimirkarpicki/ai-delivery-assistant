@@ -772,6 +772,45 @@ class ExceptionExposureTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
+    def test_the_degraded_warning_carries_no_exception_text(self):
+        """
+        The consolidation fallback returns a 201 with a warning.
+
+        That warning is part of the response, and it used to interpolate
+        the exception into the sentence. The cause is useful to an operator
+        reading the log and describes the infrastructure to a caller, so it
+        belongs in the log only. GitHub flags exactly this flow as
+        py/stack-trace-exposure, and the location it pointed at was the
+        warning rather than the error body, which is why the first fix
+        moved the alert instead of clearing it.
+        """
+
+
+        project = self.client.post(
+            "/api/projects", json={"name": "Warning Leak", "description": ""}
+        ).json()["id"]
+
+        # The analysis call succeeds and produces something consolidable;
+        # the consolidation call then fails with a text-bearing exception.
+        def fail(*args, **kwargs):
+            raise RuntimeError("consolidation hit /internal/v1 at 10.0.0.9")
+
+        with mock.patch.object(
+            api_module.MemoryConsolidator, "consolidate", fail
+        ):
+            response = self.client.post(
+                f"/api/projects/{project}/meetings",
+                data={"meeting_notes": "Alice: QA is short one tester."},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertIn("warning", body)
+        warning = body["warning"]
+        self.assertIn("standard analysis", warning)
+        for leak in ("/internal", "10.0.0.9", "RuntimeError", "Traceback"):
+            self.assertNotIn(leak, warning, f"warning leaked {leak!r}")
+
 
 class RevocationPersistenceTests(unittest.TestCase):
     """

@@ -1783,9 +1783,22 @@ def create_app(router_instance=None, database_url=None):
                 # during consolidation escapes this handler entirely and the
                 # endpoint returns 500 instead of degrading to the
                 # deterministic path, which is what this branch documents.
+                #
+                # The cause goes to the log and not into the warning. The
+                # warning is part of the response, and the exception text
+                # carries the provider endpoint and status, or the failing
+                # statement, which is exactly what an anonymous caller
+                # should not read. The caller is told that the deterministic
+                # path was used; the operator is told why.
+                logging.getLogger("ai-delivery-assistant.meetings").warning(
+                    "consolidation fell back to standard analysis: %s: %s",
+                    type(consolidation_error).__name__,
+                    consolidation_error,
+                    exc_info=True,
+                )
                 warning = (
-                    "Note: Consolidation encountered an issue "
-                    f"({consolidation_error!s}), using standard analysis."
+                    "Note: Consolidation encountered an issue, "
+                    "so standard analysis was used instead."
                 )
                 apply_meeting_analysis(project, meeting, analysis_json)
             else:
