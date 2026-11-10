@@ -2100,12 +2100,16 @@ def create_app(router_instance=None, database_url=None):
         if item is None or item.project_id != project.id:  # type: ignore[attr-defined]
             raise HTTPException(status_code=404, detail="Item not found")
 
-        latest_meeting_id = db.session.scalar(
+        # execute(...).scalar() rather than session.scalar(select(...)):
+        # SQLAlchemy 2.1 types the latter as accepting only
+        # TypedReturnsRows[Never], so a column Select is rejected. Every
+        # other read in this file already uses the execute form.
+        latest_meeting_id = db.session.execute(
             select(Meeting.id)
             .filter_by(project_id=project.id)
             .order_by(Meeting.created_at.desc())
             .limit(1)
-        )
+        ).scalar()
 
         if action == "resolve":
             if item.status == target_status:  # type: ignore[attr-defined]
