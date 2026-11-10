@@ -77,7 +77,7 @@ written.
 The standing lesson: verify a database change by connecting the way the
 application does, never from inside the database container.
 
-## Not closed: revocation unproven on PostgreSQL
+## Partly closed: revocation proven, the compose path not rebuilt
 
 Token revocation is persisted to a `revoked_tokens` table and the test
 suite passes, but the suite runs on SQLite. That is the dialect which
@@ -87,7 +87,9 @@ of those three have already bitten this project once.
 
 The live container also had a second reason it could not prove anything:
 its database volume was already initialised, so `schema.sql` was never
-loaded and the table did not exist in the running database at all.
+loaded and the table did not exist in the running database at all. That
+is the state described below under the credential drift, and it is why
+the container path was never a proof of anything.
 
 The blocker to closing it is disk space, not code. The `C:` drive had
 28 MB free of 75.2 GB, which is why Docker Desktop answered `unable to
