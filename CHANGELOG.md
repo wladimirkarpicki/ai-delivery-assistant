@@ -17,17 +17,21 @@ it is a prototype.
   name) and a `LOG_LEVEL` setting, plus a per-request correlation id echoed
   as `X-Request-ID`, so a user-reported failure can be found in the log.
 - `revoked_tokens` table with a migration, so a logout survives a process
-  restart instead of only this process.
+  restart instead of only this process. Verified by the migration chain
+  applying to a real PostgreSQL and by a process restarted with an empty
+  cache refusing a revoked token; the compose stack has not been rebuilt
+  and shown to boot from `schema.sql` with the table present, which is
+  recorded as the remaining step in `docs/REFACTORING-PLAN.md`.
 - `docs/REFACTORING-PLAN.md`: what has been done, what is in progress, what
   is not started, and an explicit non-goals list.
 
 ### Changed
 
-- `api.py` is no longer a monolith: 2212 lines down to 441, split into
-  `api_auth.py`, `api_deps.py`, `api_memory.py`, `api_analytics.py`,
-  `api_serializers.py`, `api_uploads.py` and four routers
-  (`api_routers_auth`, `api_routers_items`, `api_routers_meetings`,
-  `api_analytics`). What is left in `api.py` is the factory, CORS and
+- `api.py` is no longer a monolith: 2212 lines down to 441, split into nine
+  modules beside it: `api_auth.py`, `api_deps.py`, `api_memory.py`,
+  `api_serializers.py`, `api_uploads.py`, `api_analytics.py`, and three
+  routers (`api_routers_auth`, `api_routers_items`,
+  `api_routers_meetings`). What is left in `api.py` is the factory, CORS and
   security middleware, the request-scope middleware, the SPA fallback and
   the health route.
 - The auth state that made the split impossible now lives on `app.state`
