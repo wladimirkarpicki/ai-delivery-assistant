@@ -17,7 +17,6 @@ database_url=None), so the test suite drives a FakeRouter against an
 in-memory database exactly as before.
 """
 
-import io
 import logging
 import os
 import secrets
@@ -43,6 +42,21 @@ from sqlalchemy.orm import selectinload
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from analyzer import analyze_document, parse_analysis
+
+# Serializers, moved out whole. They are pure functions over rows, so they
+# moved with no other change, and the route handlers below reach them
+# through this import rather than a copy that could drift.
+from api_serializers import (
+    error_response,
+    serialize_action,
+    serialize_blocker,
+    serialize_event,
+    serialize_meeting,
+    serialize_project_summary,
+    serialize_risk,
+    serialize_state,
+)
+from api_uploads import _SyncUpload
 from config import DEFAULT_MODEL, DEFAULT_PROVIDER, EMBEDDING_MODEL, __version__
 from config_loader import (
     get_bootstrap_token,
@@ -89,6 +103,10 @@ from project_memory import (
 from report import build_status_report
 from router import ModelRouter
 from telemetry import REQUEST_ID_HEADER, configure_logging, new_request_id
+
+
+def _dt(value):
+    return value.isoformat() if value else None
 
 # ---------------------------------------------------------------------------
 # Fixed operator-facing messages
@@ -459,170 +477,6 @@ def _prune_revoked_rows() -> int:
     except SQLAlchemyError:
         db.session.rollback()
         return 0
-
-
-def history_changes(event):
-    """
-    Extract scalar field changes (field, old, new) from an event's
-    before/after snapshots. Nested structures (plan items, new
-    items) are skipped: their content is already reflected in the
-    event summary. Ported verbatim from the Flask template filter.
-    """
-    before = event.before_data if isinstance(event.before_data, dict) else {}
-    after = event.after_data if isinstance(event.after_data, dict) else {}
-    changes = []
-
-    for key, new_value in after.items():
-        if key not in before or before[key] == new_value:
-            continue
-
-        if isinstance(new_value, (dict, list)) or isinstance(before[key], (dict, list)):
-            continue
-
-        changes.append((key, before[key], new_value))
-
-    return changes
-
-
-# ---------------------------------------------------------------------------
-# Serializers (plain dicts: the frontend owns its own types)
-
-
-def _dt(value):
-    return value.isoformat() if value else None
-
-
-def serialize_risk(risk):
-    return {
-        "id": risk.id,
-        "title": risk.title,
-        "description": risk.description,
-        "impact": risk.impact,
-        "mitigation": risk.mitigation,
-        "status": risk.status,
-        "resolved_at": _dt(risk.resolved_at),
-    }
-
-
-def serialize_blocker(blocker):
-    return {
-        "id": blocker.id,
-        "title": blocker.title,
-        "description": blocker.description,
-        "status": blocker.status,
-        "resolved_at": _dt(blocker.resolved_at),
-    }
-
-
-def serialize_action(action):
-    return {
-        "id": action.id,
-        "title": action.title,
-        "details": action.details,
-        "owner": action.owner,
-        "due_date": action.due_date.isoformat() if action.due_date else None,
-        "status": action.status,
-        "completed_at": _dt(action.completed_at),
-    }
-
-
-def serialize_meeting(meeting, detail=False):
-    data = {
-        "id": meeting.id,
-        "project_id": meeting.project_id,
-        "title": meeting.title,
-        "source_filename": meeting.source_filename,
-        "provider": meeting.provider,
-        "model": meeting.model,
-        "created_at": _dt(meeting.created_at),
-    }
-
-    if detail:
-        data["original_text"] = meeting.original_text
-        data["analysis_text"] = meeting.analysis_text
-        data["analysis_json"] = meeting.analysis_json
-        data["project_name"] = meeting.project.name
-
-    return data
-
-
-def serialize_event(event):
-    return {
-        "id": event.id,
-        "project_id": event.project_id,
-        "meeting_id": event.meeting_id,
-        "entity_type": event.entity_type,
-        "entity_id": event.entity_id,
-        "event_type": event.event_type,
-        "summary": event.summary,
-        "before_data": event.before_data,
-        "after_data": event.after_data,
-        "created_at": _dt(event.created_at),
-        "changes": [
-            {"field": field, "old": old, "new": new}
-            for field, old, new in history_changes(event)
-        ],
-    }
-
-
-def serialize_project_summary(project):
-    return {
-        "id": project.id,
-        "name": project.name,
-        "description": project.description,
-        "updated_at": _dt(project.updated_at),
-    }
-
-
-def serialize_state(state):
-    if state is None:
-        return {
-            "delivery_status": "unknown",
-            "progress_summary": "No meeting analysis yet.",
-            "completed_items": [],
-            "in_progress_items": [],
-        }
-
-    return {
-        "delivery_status": state.delivery_status,
-        "progress_summary": state.progress_summary or "No meeting analysis yet.",
-        "completed_items": state.completed_items or [],
-        "in_progress_items": state.in_progress_items or [],
-    }
-
-
-def error_response(message, status_code=400):
-    return JSONResponse(status_code=status_code, content={"error": message})
-
-
-class _SyncUpload:
-    """
-    Flask FileStorage-compatible view over a Starlette UploadFile:
-    document_parser.extract_text reads .filename and calls .read()
-    synchronously, and python-docx / pypdf open the object as a
-    seekable stream (ZipFile needs seek/tell). The adapter wraps the
-    already-loaded upload bytes in a BytesIO so every protocol the
-    parser relies on is available.
-    """
-
-    def __init__(self, filename, content: bytes):
-        self.filename = filename
-        self._buffer = io.BytesIO(content)
-
-    def read(self, n: int = -1) -> bytes:
-        return self._buffer.read(n)
-
-    def seek(self, *args, **kwargs):
-        return self._buffer.seek(*args, **kwargs)
-
-    def seekable(self) -> bool:
-        return self._buffer.seekable()
-
-    def tell(self):
-        return self._buffer.tell()
-
-    def getvalue(self) -> bytes:
-        return self._buffer.getvalue()
 
 
 # ---------------------------------------------------------------------------
