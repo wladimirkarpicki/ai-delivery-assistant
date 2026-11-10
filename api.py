@@ -25,11 +25,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
-import jwt
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -42,6 +40,24 @@ from sqlalchemy.orm import selectinload
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from analyzer import analyze_document, parse_analysis
+
+# Auth is module-level and reads its state from request.app.state, so a
+# separate module could import these as dependencies. The previous form
+# was a set of closures inside create_app, which is what blocked a router
+# split: a closure closes over the create_app call that made it.
+from api_auth import (
+    CredentialsIn,
+    SetupIn,
+    clear_auth_cookie,
+    create_token,
+    get_current_user,
+    install_auth,
+    prune_revoked_rows,
+    read_token,
+    require_admin,
+    revoke_token,
+    set_auth_cookie,
+)
 
 # Serializers, moved out whole. They are pure functions over rows, so they
 # moved with no other change, and the route handlers below reach them
@@ -87,7 +103,6 @@ from models import (
     Project,
     ProjectState,
     ReviewResolution,
-    RevokedToken,
     Risk,
     User,
 )
@@ -171,18 +186,6 @@ class ReviewResolve(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Authentication (roles admin/user, JWT bearer sessions)
-
-
-class CredentialsIn(BaseModel):
-    username: str = Field(min_length=1, max_length=80)
-    password: str = Field(min_length=1)
-
-
-class SetupIn(CredentialsIn):
-    # The one-time token that gates bootstrap. POST /api/auth/setup has
-    # no authenticated caller to check, so this is what keeps an
-    # unauthenticated request from creating the admin account.
-    bootstrap_token: str = ""
 
 
 class UserCreateIn(BaseModel):
@@ -456,29 +459,6 @@ def embed_finding_titles(router, analysis):
     return dict(zip(titles, vectors))
 
 
-def _prune_revoked_rows() -> int:
-    """
-    Drop revoked-token rows whose token has expired.
-
-    Called on logout rather than on a request path: it is not on the hot
-    path, and a table holding rows whose token no longer matters is
-    clutter rather than a security issue. Returns the number removed so a
-    caller can log it.
-    """
-
-    try:
-        removed = (
-            db.session.query(RevokedToken)
-            .filter(RevokedToken.expires_at < datetime.now(UTC))
-            .delete(synchronize_session=False)
-        )
-        db.session.commit()
-        return int(removed or 0)
-    except SQLAlchemyError:
-        db.session.rollback()
-        return 0
-
-
 # ---------------------------------------------------------------------------
 # Application factory
 
@@ -603,174 +583,15 @@ def create_app(router_instance=None, database_url=None):
         )
 
     token_ttl = timedelta(hours=get_token_ttl_hours())
-    _bearer = HTTPBearer(auto_error=False)
 
-    # The session cookie. It carries the same JWT the JSON body used to
-    # carry, so the frontend can move off localStorage without the API
-    # dropping the old clients mid-flight.
-    COOKIE_NAME = "aida_token"
-    COOKIE_PATH = "/"
-    # SameSite=Strict keeps the cookie off cross-site requests, and
-    # HttpOnly keeps it out of reach of any script on the page. Secure
-    # is only meaningful over TLS and is added per request below.
-    COOKIE_SAMESITE = "strict"
-
-    def create_token(user_id: int, username: str) -> str:
-        payload = {
-            "sub": str(user_id),
-            "username": username,
-            "exp": datetime.now(UTC) + token_ttl,
-            # An id per issued token, so one session can be signed out
-            # without invalidating the others the same user holds.
-            "jti": secrets.token_urlsafe(16),
-        }
-        return jwt.encode(payload, secret_key, algorithm="HS256")
-
-    # Ids of tokens that have been signed out. A stateless JWT cannot be
-    # un-issued, so without this the same token stays valid in any other
-    # browser or device until it expires. Only ids are compared, so this
-    # holds ids rather than whole sessions.
-    #
-    # This set is a cache, not the record. The record is the
-    # revoked_tokens table: an in-memory set alone meant a logout stopped
-    # taking effect after a restart, and the token lived for up to
-    # TOKEN_TTL_HOURS after that. Writing on logout and reading through to
-    # the table on a miss is what makes revocation survive a restart, and
-    # the set still saves a query on the hot path for a process that has
-    # already revoked the token.
-    _revoked_ids: set[str] = set()
-
-    def _is_revoked(token_value: str) -> bool:
-        """
-        True for a token that has been signed out.
-
-        A stateless JWT cannot be un-issued, so without this a logout
-        only clears the cookie in one browser while the same token stays
-        valid anywhere else until it expires. Only ids are compared, so
-        memory holds ids rather than whole sessions.
-        """
-        try:
-            payload = jwt.decode(
-                token_value,
-                secret_key,
-                algorithms=["HS256"],
-                options={"verify_exp": False},
-            )
-            jti = payload.get("jti")
-        except (jwt.PyJWTError, TypeError, ValueError):
-            return False
-
-        if not jti:
-            return False
-
-        if jti in _revoked_ids:
-            return True
-
-        # A miss in the cache is answered from the table, which is where
-        # the answer survives a restart. The id is the primary key, so
-        # this is one index lookup, on the same query path the user
-        # lookup already takes.
-        row = db.session.get(RevokedToken, jti)
-
-        if row is None:
-            return False
-
-        _revoked_ids.add(jti)
-        return True
-
-    def _expiry_from_payload(payload) -> datetime:
-        """
-        The token's own expiry, as a UTC datetime.
-
-        Stored with the revocation so a row can be dropped once its token
-        has lapsed anyway. A payload with no exp falls back to now, which
-        makes the row immediately prunable rather than permanent: the
-        token carries no expiry to wait out, so there is nothing to
-        protect by keeping it.
-        """
-
-        exp = payload.get("exp") if isinstance(payload, dict) else None
-
-        if not isinstance(exp, (int, float)):
-            return datetime.now(UTC)
-
-        return datetime.fromtimestamp(exp, tz=UTC)
-
-    def _is_https(request: Request) -> bool:
-        """
-        True when the request arrived over TLS.
-
-        Terminating the proxy in front of the app is common, so honour
-        X-Forwarded-Proto in addition to the scheme the ASGI server saw.
-        """
-
-        forwarded = request.headers.get("x-forwarded-proto", "")
-
-        if forwarded:
-            return forwarded.split(",")[0].strip().lower() == "https"
-
-        return request.url.scheme == "https"
-
-    def set_auth_cookie(response: Response, token: str, request: Request) -> None:
-        response.set_cookie(
-            key=COOKIE_NAME,
-            value=token,
-            max_age=int(token_ttl.total_seconds()),
-            path=COOKIE_PATH,
-            httponly=True,
-            samesite=COOKIE_SAMESITE,
-            secure=_is_https(request),
-        )
-
-    def clear_auth_cookie(response: Response) -> None:
-        """Drop the session cookie, for a token that has become invalid."""
-
-        response.delete_cookie(
-            key=COOKIE_NAME,
-            path=COOKIE_PATH,
-            httponly=True,
-            samesite=COOKIE_SAMESITE,
-        )
-
-    def get_current_user(
-        request: Request,
-        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    ) -> dict:
-        # The cookie is preferred: it is the form no script can read. The
-        # Authorization header is still accepted so a client that has not
-        # switched over keeps working.
-        token_value: str | None = None
-
-        if credentials is not None:
-            token_value = credentials.credentials
-        else:
-            token_value = request.cookies.get(COOKIE_NAME)
-
-        if not token_value:
-            raise HTTPException(status_code=401, detail="Not authenticated.")
-
-        if _is_revoked(token_value):
-            raise HTTPException(status_code=401, detail="Session has ended.")
-
-        try:
-            payload = jwt.decode(
-                token_value, secret_key, algorithms=["HS256"]
-            )
-            user_id = int(payload.get("sub", ""))
-        except (jwt.PyJWTError, TypeError, ValueError):
-            raise HTTPException(status_code=401, detail="Invalid or expired token.")
-
-        user = db.session.get(User, user_id)
-
-        if user is None:
-            raise HTTPException(status_code=401, detail="Account no longer exists.")
-
-        return {"id": user.id, "username": user.username, "role": user.role}
-
-    def require_admin(user: dict = Depends(get_current_user)) -> dict:
-        if user["role"] != "admin":
-            raise HTTPException(status_code=403, detail="Admin only.")
-        return user
+    # The signing key and the ttl live on app.state, and the auth functions
+    # in api_auth read them per request. A module-level global was the
+    # alternative and is worse than it looks: secret_key is generated per
+    # create_app call, and the test suite builds about ten apps in one
+    # process, so a global would make all of them share one key and one
+    # revocation set, and every test would keep passing while the isolation
+    # they were written to check quietly disappeared.
+    install_auth(app, secret_key, token_ttl)
 
     @app.post("/api/auth/setup")
     def auth_setup(data: SetupIn, request: Request):
@@ -807,7 +628,7 @@ def create_app(router_instance=None, database_url=None):
         db.session.add(user)
         db.session.commit()
 
-        token = create_token(user.id, user.username)
+        token = create_token(app=request.app, user_id=user.id, username=user.username)
         payload = {
             "access_token": token,
             "token_type": "bearer",  # nosec B105  # token_type is the OAuth2 scheme, not a password
@@ -817,7 +638,7 @@ def create_app(router_instance=None, database_url=None):
         # The cookie is the form no script can read; the body field stays
         # so older clients keep working until they are migrated off it.
         response = JSONResponse(payload)
-        set_auth_cookie(response, token, request)
+        set_auth_cookie(app=request.app, response=response, token=token, request=request)
         return response
 
     @app.post("/api/auth/login")
@@ -841,7 +662,7 @@ def create_app(router_instance=None, database_url=None):
 
         _clear_failed_logins(data.username)
 
-        token = create_token(user.id, user.username)
+        token = create_token(app=request.app, user_id=user.id, username=user.username)
         payload = {
             "access_token": token,
             "token_type": "bearer",  # nosec B105  # token_type is the OAuth2 scheme, not a password
@@ -849,7 +670,7 @@ def create_app(router_instance=None, database_url=None):
         }
 
         response = JSONResponse(payload)
-        set_auth_cookie(response, token, request)
+        set_auth_cookie(app=request.app, response=response, token=token, request=request)
         return response
 
     @app.post("/api/auth/logout")
@@ -862,39 +683,15 @@ def create_app(router_instance=None, database_url=None):
         keep working. The token's id is recorded as signed out so every
         presentation of it is refused, not just this browser's.
         """
-        token_value = request.cookies.get(COOKIE_NAME)
-        authorization = request.headers.get("authorization", "")
-
-        if not token_value and authorization.lower().startswith("bearer "):
-            token_value = authorization[7:].strip()
+        token_value = read_token(request, None)
 
         if token_value:
             try:
-                payload = jwt.decode(
-                    token_value,
-                    secret_key,
-                    algorithms=["HS256"],
-                    options={"verify_exp": False},
-                )
-                jti = payload.get("jti")
-                if jti:
-                    # Written to the table as well as the cache, so the
-                    # revocation survives a restart. The row carries the
-                    # token's own expiry: until then it is the record, and
-                    # after it is dead weight, which _prune_revoked_rows
-                    # clears.
-                    if db.session.get(RevokedToken, jti) is None:
-                        db.session.add(
-                            RevokedToken(
-                                jti=jti,
-                                expires_at=_expiry_from_payload(payload),
-                            )
-                        )
-                    db.session.commit()
-                    _revoked_ids.add(jti)
-            except (jwt.PyJWTError, TypeError, ValueError):
-                # An unreadable token is already refused; nothing to revoke.
-                pass
+                # Written to the table as well as the cache, so the
+                # revocation survives a restart. The row carries the
+                # token's own expiry: until then it is the record, and
+                # after it is dead weight, which prune_revoked_rows clears.
+                revoke_token(app=request.app, token_value=token_value)
             except SQLAlchemyError:
                 # The cookie is still cleared and the cache still holds
                 # the id, so this browser and this process lose access
@@ -912,7 +709,7 @@ def create_app(router_instance=None, database_url=None):
 
         # Drop rows whose token already lapsed. Not on a request path, so
         # a logout absorbs the cost of keeping the table bounded.
-        pruned = _prune_revoked_rows()
+        pruned = prune_revoked_rows()
         if pruned:
             logging.getLogger("ai-delivery-assistant.auth").debug(
                 "pruned %d expired revoked-token row(s)", pruned
