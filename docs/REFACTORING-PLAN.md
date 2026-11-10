@@ -123,6 +123,40 @@ To close that: free several GB, then `docker builder prune -af`, re-pull
 `node:22-alpine` and `python:3.13-slim`, `docker compose build`, and run
 the same probe through the published port.
 
+## One elevated command left: the PostgreSQL bind
+
+`listen_addresses` on the host PostgreSQL 18 is `'*'`, so it listens on
+`0.0.0.0` and `::`. The config has been edited to `'localhost'` with a
+backup at `_db_backups/postgresql18_conf_20261111_backup.conf`, and the
+surrounding structure is intact: the edit added three comment lines and
+the value, and `port` and the directives after it are unchanged.
+
+Two things stopped it taking effect, both of which needed elevation:
+
+- `Restart-Service postgresql-x64-18` fails with `Cannot open
+  postgresql-x64-18 service on computer '.'`, which is a permissions
+  error, not a state error. An earlier restart that appeared to succeed
+  did not: it was run with `-ErrorAction SilentlyContinue`, so the same
+  failure was swallowed. That is why the server kept reporting
+  `listen_addresses = '*'` right after.
+- `listen_addresses` is a postmaster parameter. `pg_reload_conf()` does
+  not apply it, so there is no unprivileged path.
+
+To finish it, from an elevated shell:
+
+```
+Restart-Service postgresql-x64-18
+```
+
+then confirm the server reports `localhost` and the listening sockets
+show `::1` only, not `0.0.0.0`.
+
+Until then the reachability picture is unchanged and should not be
+overstated: `pg_hba.conf` allows only `local`, `127.0.0.1/32` and
+`::1/128`, all with `scram-sha-256`, and there is no inbound firewall
+rule for 5432, so the port is not reachable from the network. The bind
+is a latent gap rather than a live one.
+
 ## Explicit non-goals
 
 - No dependency-injection framework, no plugin system, no event bus. The
