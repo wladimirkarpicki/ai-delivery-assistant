@@ -61,6 +61,7 @@ from api_auth import (
     revoke_token,
     set_auth_cookie,
 )
+from api_deps import _get_project, install_deps
 
 # Serializers, moved out whole. They are pure functions over rows, so they
 # moved with no other change, and the route handlers below reach them
@@ -469,11 +470,16 @@ def create_app(router_instance=None, database_url=None):
     configure_database(database_url)
     router = router_instance or ModelRouter()
 
+    # The router goes on app.state, not a closure: the test suite passes a
+    # fake per app, and a shared singleton would leak the last-bound fake
+    # into every other app in the same process.
     app = FastAPI(
         title="AI Delivery Assistant",
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
+
+    install_deps(app, router)
 
     # One formatter and level for the whole app, so a production line
     # carries a timestamp, a level and a logger name. Before this the
@@ -859,14 +865,6 @@ def create_app(router_instance=None, database_url=None):
         db.session.commit()
 
         return {"ok": True}
-
-    def _get_project(project_id):
-        project = db.session.get(Project, project_id)
-
-        if project is None:
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        return project
 
     @app.get("/api/health")
     def health():
