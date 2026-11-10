@@ -445,6 +445,277 @@ def _apply_actions(project, meeting, actions):
     _apply_item_group(project, meeting, actions, _ITEM_SPECS["action_item"])
 
 
+# The consolidation path has its own field maps, separate from the
+# meeting-analysis ones above, because the two paths treat the same fields
+# differently: here a new item's status goes through _normalize_status,
+# an updated item's status does not, and the update snapshot carries the
+# title while the analysis snapshot does not. Reusing one map for both
+# would quietly change one of the two behaviours.
+_PLAN_ITEM_SPECS = {
+    ActionItem: {
+        "label": "action item",
+        "create_fields": ("details", "owner"),
+        "create_due_date": True,
+        "create_defaults": {"details": "", "owner": ""},
+        "update_fields": ("details", "owner", "status"),
+        "update_due_date": True,
+        "snapshot_fields": ("title", "details", "owner", "status"),
+        "done_status": "completed",
+        "at_field": "completed_at",
+        "in_meeting_field": "completed_in_meeting_id",
+    },
+    Risk: {
+        "label": "risk",
+        "create_fields": ("description", "impact", "mitigation"),
+        "create_due_date": False,
+        "create_defaults": {
+            "description": "",
+            "impact": "unknown",
+            "mitigation": "",
+        },
+        "update_fields": ("description", "impact", "mitigation", "status"),
+        "update_due_date": False,
+        "snapshot_fields": ("description", "impact", "mitigation", "status"),
+        "done_status": "resolved",
+        "at_field": "resolved_at",
+        "in_meeting_field": "resolved_in_meeting_id",
+    },
+    Blocker: {
+        "label": "blocker",
+        "create_fields": ("description",),
+        "create_due_date": False,
+        "create_defaults": {"description": ""},
+        "update_fields": ("description", "status"),
+        "update_due_date": False,
+        "snapshot_fields": ("description", "status"),
+        "done_status": "resolved",
+        "at_field": "resolved_at",
+        "in_meeting_field": "resolved_in_meeting_id",
+    },
+}
+
+
+def _entity_label(model_class):
+    """Human-readable label for history messages, kept separate from entity_type."""
+
+    spec = _PLAN_ITEM_SPECS.get(model_class)
+    return spec["label"] if spec else None
+
+
+def _build_plan_item(project, meeting, model_class, new_item, title):
+    """A new record for a CREATE decision, with the type's own fields."""
+
+    spec = _PLAN_ITEM_SPECS[model_class]
+
+    fields = {}
+    for field in spec["create_fields"]:
+        fields[field] = _value(new_item, field)
+    fields.update(spec["create_defaults"])
+
+    if spec["create_due_date"]:
+        raw = _value(new_item, "due_date")
+        try:
+            fields["due_date"] = date.fromisoformat(raw) if raw else None
+        except (ValueError, TypeError):
+            fields["due_date"] = None
+
+    obj = model_class(
+        project_id=project.id,
+        title=title,
+        canonical_title=normalize_title(title),
+        status=_normalize_status(_value(new_item, "status", "open")),
+        created_in_meeting_id=meeting.id,
+        updated_in_meeting_id=meeting.id,
+        **fields,
+    )
+    return obj
+
+
+def _stamp_done(obj, spec, meeting, done):
+    """
+    Set or clear the completion/resolution stamp so it matches the status.
+
+    The stamp and the status used to drift: a status could become
+    "resolved" while resolved_at stayed None, and reopening an item left
+    the old stamp in place claiming it was still resolved.
+    """
+
+    if done:
+        setattr(obj, spec["at_field"], utcnow())
+        setattr(obj, spec["in_meeting_field"], meeting.id)
+    elif getattr(obj, spec["at_field"], None) is not None:
+        # Reopened: clear the stale stamp.
+        setattr(obj, spec["at_field"], None)
+        setattr(obj, spec["in_meeting_field"], None)
+
+
+def _apply_plan_update(existing, model_class, new_item, meeting):
+    """The UPDATE branch's per-type field write, plus the stamp correction."""
+
+    spec = _PLAN_ITEM_SPECS[model_class]
+
+    for field in spec["update_fields"]:
+        # A field the plan does not mention must keep its current value:
+        # _value defaults to "", which would silently erase data that was
+        # never updated.
+        setattr(
+            existing,
+            field,
+            _value(new_item, field, getattr(existing, field, None)),
+        )
+
+    if spec["update_due_date"]:
+        raw = _value(new_item, "due_date")
+        if raw:
+            try:
+                existing.due_date = date.fromisoformat(raw)
+            except (ValueError, TypeError):
+                pass
+
+    existing.updated_in_meeting_id = meeting.id
+
+    done = existing.status == spec["done_status"]
+    _stamp_done(existing, spec, meeting, done)
+
+    return existing
+
+
+def _apply_create(project, meeting, item, model_class, title, reason, created):
+    """CREATE: make the record, recording a merge if this plan already did."""
+
+    created_titles = created.setdefault(model_class, {})
+    duplicate_id = created_titles.get(normalize_title(title))
+
+    if duplicate_id is not None:
+        # The same plan already created this title in this meeting:
+        # merge into it instead of creating a duplicate.
+        _event(
+            project.id,
+            meeting.id,
+            _entity_label(model_class),
+            duplicate_id,
+            "merged",
+            (
+                f"Merged duplicate {_entity_label(model_class)}: {title} "
+                f"(duplicate CREATE within the same plan). "
+                f"Reason: {reason}"
+            ),
+        )
+        return
+
+    obj = _build_plan_item(project, meeting, model_class, item.get("new_item", {}), title)
+    spec = _PLAN_ITEM_SPECS[model_class]
+
+    if _value(item.get("new_item", {}), "status") in ("completed", "resolved"):
+        _stamp_done(obj, spec, meeting, done=True)
+        obj.status = spec["done_status"]
+
+    db.session.add(obj)
+    db.session.flush()
+
+    created_titles[normalize_title(title)] = obj.id
+
+    _event(
+        project.id,
+        meeting.id,
+        spec["label"],
+        obj.id,
+        "created",
+        f"Created {spec['label']}: {title} (via consolidation)",
+    )
+
+
+def _apply_merge(project, meeting, item, model_class, title, reason):
+    """MERGE: the existing item already represents this, so do not duplicate."""
+
+    if not item.get("existing_item_id"):
+        _needs_review_event(project, meeting, _entity_label(model_class), item, "missing")
+        return
+
+    existing, problem = _plan_existing_item(project, model_class, item)
+
+    if problem:
+        _needs_review_event(project, meeting, _entity_label(model_class), item, problem)
+        return
+
+    _event(
+        project.id,
+        meeting.id,
+        _entity_label(model_class),
+        existing.id,
+        "merged",
+        f"Merged duplicate {_entity_label(model_class)}: {title}. Reason: {reason}",
+    )
+
+
+def _apply_update(project, meeting, item, model_class, title, reason):
+    """UPDATE: write the plan's fields, keeping resolution stamps consistent."""
+
+    if not item.get("existing_item_id"):
+        _needs_review_event(project, meeting, _entity_label(model_class), item, "missing")
+        return
+
+    existing, problem = _plan_existing_item(project, model_class, item)
+
+    if problem:
+        _needs_review_event(project, meeting, _entity_label(model_class), item, problem)
+        return
+
+    if not existing:
+        return
+
+    before = _snapshot(existing, _PLAN_ITEM_SPECS[model_class]["snapshot_fields"])
+
+    _apply_plan_update(existing, model_class, item.get("new_item", {}), meeting)
+
+    after = _snapshot(existing, _PLAN_ITEM_SPECS[model_class]["snapshot_fields"])
+
+    _event(
+        project.id,
+        meeting.id,
+        _entity_label(model_class),
+        existing.id,
+        "updated",
+        f"Updated {_entity_label(model_class)}: {title}. Reason: {reason}",
+        before,
+        after,
+    )
+
+
+def _apply_conflict(project, meeting, item, model_class, title, reason):
+    """CONFLICT: preserve the existing item and record what contradicted it."""
+
+    if not item.get("existing_item_id"):
+        _needs_review_event(project, meeting, _entity_label(model_class), item, "missing")
+        return
+
+    existing, problem = _plan_existing_item(project, model_class, item)
+
+    if problem:
+        _needs_review_event(project, meeting, _entity_label(model_class), item, problem)
+        return
+
+    _event(
+        project.id,
+        meeting.id,
+        _entity_label(model_class),
+        existing.id,
+        "conflict",
+        (
+            f"Conflict detected for {_entity_label(model_class)}: "
+            f"{title}. Existing preserved. Reason: {reason}"
+        ),
+        {
+            "title": existing.title,
+            "status": existing.status,
+        },
+        {
+            "conflicting_title": title,
+            "conflicting_status": _value(item.get("new_item", {}), "status"),
+        },
+    )
+
+
 def _apply_consolidation_item(
     project,
     meeting,
@@ -461,10 +732,14 @@ def _apply_consolidation_item(
 
     model_class:
         Risk, Blocker, or ActionItem
+
+    Each decision is a named branch, and the per-type field differences
+    live in _PLAN_ITEM_SPECS. This dispatcher decides which branch runs;
+    it no longer contains the branch bodies.
     """
 
     new_item = item.get("new_item", {})
-    existing_item_id = item.get("existing_item_id")
+    item.get("existing_item_id")
 
     title = _value(new_item, "title")
     reason = _value(item, "reason")
@@ -473,15 +748,9 @@ def _apply_consolidation_item(
     if isinstance(decision_type, str):
         decision_type = decision_type.strip().upper()
 
-    # Human-readable label used in history messages.
-    # Keep database entity_type values separate from UI wording.
-    if model_class == ActionItem:
-        entity_label = "action item"
-    elif model_class == Risk:
-        entity_label = "risk"
-    elif model_class == Blocker:
-        entity_label = "blocker"
-    else:
+    entity_label = _entity_label(model_class)
+
+    if entity_label is None:
         return
 
     if not title:
@@ -490,402 +759,18 @@ def _apply_consolidation_item(
         _needs_review_event(project, meeting, entity_label, item, "missing_title")
         return
 
-    # ---------------------------------------------------------
-    # CREATE
-    # ---------------------------------------------------------
     if decision_type == "CREATE":
-        created_titles = created.setdefault(model_class, {})
-        duplicate_id = created_titles.get(normalize_title(title))
-
-        if duplicate_id is not None:
-            # The same plan already created this title in this meeting:
-            # merge into it instead of creating a duplicate.
-            _event(
-                project.id,
-                meeting.id,
-                entity_label,
-                duplicate_id,
-                "merged",
-                (
-                    f"Merged duplicate {entity_label}: {title} "
-                    f"(duplicate CREATE within the same plan). "
-                    f"Reason: {reason}"
-                ),
-            )
-            return
-
-        if model_class == ActionItem:
-            due_date = _value(new_item, "due_date")
-
-            try:
-                due_date = (
-                    date.fromisoformat(due_date)
-                    if due_date
-                    else None
-                )
-            except (ValueError, TypeError):
-                due_date = None
-
-            obj = ActionItem(
-                project_id=project.id,
-                title=title,
-                canonical_title=normalize_title(title),
-                details=_value(new_item, "details"),
-                owner=_value(new_item, "owner"),
-                due_date=due_date,
-                status=_normalize_status(_value(new_item, "status", "open")),
-                created_in_meeting_id=meeting.id,
-                updated_in_meeting_id=meeting.id,
-            )
-
-        elif model_class == Risk:
-            obj = Risk(
-                project_id=project.id,
-                title=title,
-                canonical_title=normalize_title(title),
-                description=_value(new_item, "description"),
-                impact=_value(new_item, "impact", "unknown"),
-                mitigation=_value(new_item, "mitigation"),
-                status=_normalize_status(_value(new_item, "status", "open")),
-                created_in_meeting_id=meeting.id,
-                updated_in_meeting_id=meeting.id,
-            )
-
-        elif model_class == Blocker:
-            obj = Blocker(
-                project_id=project.id,
-                title=title,
-                canonical_title=normalize_title(title),
-                description=_value(new_item, "description"),
-                status=_normalize_status(_value(new_item, "status", "open")),
-                created_in_meeting_id=meeting.id,
-                updated_in_meeting_id=meeting.id,
-            )
-
-        else:
-            return
-
-        if _value(new_item, "status") in (
-            "completed",
-            "resolved",
-        ):
-            if model_class == ActionItem:
-                obj.status = "completed"
-                obj.completed_at = utcnow()
-                obj.completed_in_meeting_id = meeting.id
-            else:
-                obj.status = "resolved"
-                obj.resolved_at = utcnow()
-                obj.resolved_in_meeting_id = meeting.id
-
-        db.session.add(obj)
-        db.session.flush()
-
-        created_titles[normalize_title(title)] = obj.id
-
-        _event(
-            project.id,
-            meeting.id,
-            entity_label,
-            obj.id,
-            "created",
-            f"Created {entity_label}: {title} (via consolidation)",
-        )
-
-    # ---------------------------------------------------------
-    # MERGE
-    # ---------------------------------------------------------
+        _apply_create(project, meeting, item, model_class, title, reason, created)
     elif decision_type == "MERGE":
-
-        if not existing_item_id:
-            _needs_review_event(
-                project,
-                meeting,
-                entity_label,
-                item,
-                "missing",
-            )
-
-        else:
-            existing, problem = _plan_existing_item(
-                project,
-                model_class,
-                item,
-            )
-
-            if problem:
-                _needs_review_event(
-                    project,
-                    meeting,
-                    entity_label,
-                    item,
-                    problem,
-                )
-
-            else:
-                # Existing item already represents this information.
-                # Do not create a duplicate.
-                _event(
-                    project.id,
-                    meeting.id,
-                    entity_label,
-                    existing.id,
-                    "merged",
-                    (
-                        f"Merged duplicate {entity_label}: "
-                        f"{title}. Reason: {reason}"
-                    ),
-                )
-
-    # ---------------------------------------------------------
-    # UPDATE
-    # ---------------------------------------------------------
+        _apply_merge(project, meeting, item, model_class, title, reason)
     elif decision_type == "UPDATE":
-
-        if not existing_item_id:
-            _needs_review_event(
-                project,
-                meeting,
-                entity_label,
-                item,
-                "missing",
-            )
-
-        else:
-            existing, problem = _plan_existing_item(
-                project,
-                model_class,
-                item,
-            )
-
-            if problem:
-                _needs_review_event(
-                    project,
-                    meeting,
-                    entity_label,
-                    item,
-                    problem,
-                )
-
-            if existing:
-                before = None
-                after = None
-
-                if model_class == ActionItem:
-                    before = {
-                        "title": existing.title,
-                        "details": existing.details,
-                        "owner": existing.owner,
-                        "status": existing.status,
-                    }
-
-                    # A field the plan does not mention must keep its
-                    # current value: _value defaults to "", which would
-                    # silently erase meeting data that was never updated.
-                    existing.details = _value(
-                        new_item,
-                        "details",
-                        existing.details,
-                    )
-
-                    existing.owner = _value(
-                        new_item,
-                        "owner",
-                        existing.owner,
-                    )
-
-                    existing.status = _value(
-                        new_item,
-                        "status",
-                        existing.status,
-                    )
-
-                    due_date = _value(
-                        new_item,
-                        "due_date",
-                    )
-
-                    try:
-                        existing.due_date = (
-                            date.fromisoformat(due_date)
-                            if due_date
-                            else existing.due_date
-                        )
-                    except (ValueError, TypeError):
-                        pass
-
-                    after = {
-                        "title": existing.title,
-                        "details": existing.details,
-                        "owner": existing.owner,
-                        "status": existing.status,
-                    }
-
-                elif model_class == Risk:
-                    before = {
-                        "description": existing.description,
-                        "impact": existing.impact,
-                        "mitigation": existing.mitigation,
-                        "status": existing.status,
-                    }
-
-                    existing.description = _value(
-                        new_item,
-                        "description",
-                        existing.description,
-                    )
-
-                    existing.impact = _value(
-                        new_item,
-                        "impact",
-                        existing.impact,
-                    )
-
-                    existing.mitigation = _value(
-                        new_item,
-                        "mitigation",
-                        existing.mitigation,
-                    )
-
-                    existing.status = _value(
-                        new_item,
-                        "status",
-                        existing.status,
-                    )
-
-                    after = {
-                        "description": existing.description,
-                        "impact": existing.impact,
-                        "mitigation": existing.mitigation,
-                        "status": existing.status,
-                    }
-
-                elif model_class == Blocker:
-                    before = {
-                        "description": existing.description,
-                        "status": existing.status,
-                    }
-
-                    existing.description = _value(
-                        new_item,
-                        "description",
-                        existing.description,
-                    )
-
-                    existing.status = _value(
-                        new_item,
-                        "status",
-                        existing.status,
-                    )
-
-                    after = {
-                        "description": existing.description,
-                        "status": existing.status,
-                    }
-
-                existing.updated_in_meeting_id = meeting.id
-
-                # Keep resolution/completion stamps consistent with the
-                # new status (previously the status changed but the
-                # stamps did not, leaving resolved items without
-                # resolved_at and completed ones without completed_at).
-                if model_class == ActionItem:
-                    if existing.status == "completed":
-                        existing.completed_at = utcnow()
-                        existing.completed_in_meeting_id = meeting.id
-                    elif existing.completed_at is not None:
-                        # Reopened: clear the stale completion stamp.
-                        existing.completed_at = None
-                        existing.completed_in_meeting_id = None
-                else:
-                    if existing.status == "resolved":
-                        existing.resolved_at = utcnow()
-                        existing.resolved_in_meeting_id = meeting.id
-                    elif existing.resolved_at is not None:
-                        # Reopened: clear the stale resolution stamp.
-                        existing.resolved_at = None
-                        existing.resolved_in_meeting_id = None
-
-                _event(
-                    project.id,
-                    meeting.id,
-                    entity_label,
-                    existing.id,
-                    "updated",
-                    (
-                        f"Updated {entity_label}: "
-                        f"{title}. Reason: {reason}"
-                    ),
-                    before,
-                    after,
-                )
-
-    # ---------------------------------------------------------
-    # CONFLICT
-    # ---------------------------------------------------------
+        _apply_update(project, meeting, item, model_class, title, reason)
     elif decision_type == "CONFLICT":
-
-        if not existing_item_id:
-            _needs_review_event(
-                project,
-                meeting,
-                entity_label,
-                item,
-                "missing",
-            )
-
-        else:
-            existing, problem = _plan_existing_item(
-                project,
-                model_class,
-                item,
-            )
-
-            if problem:
-                _needs_review_event(
-                    project,
-                    meeting,
-                    entity_label,
-                    item,
-                    problem,
-                )
-
-            else:
-                # Preserve the existing item and record the conflict.
-                _event(
-                    project.id,
-                    meeting.id,
-                    entity_label,
-                    existing.id,
-                    "conflict",
-                    (
-                        f"Conflict detected for {entity_label}: "
-                        f"{title}. Existing preserved. "
-                        f"Reason: {reason}"
-                    ),
-                    {
-                        "title": existing.title,
-                        "status": existing.status,
-                    },
-                    {
-                        "conflicting_title": title,
-                        "conflicting_status": _value(
-                            new_item,
-                            "status",
-                        ),
-                    },
-                )
-
+        _apply_conflict(project, meeting, item, model_class, title, reason)
     else:
         # Unknown decision type from the AI plan: preserve the entry
         # for review instead of dropping it silently.
-        _needs_review_event(
-            project,
-            meeting,
-            entity_label,
-            item,
-            "unknown_decision",
-        )
+        _needs_review_event(project, meeting, entity_label, item, "unknown_decision")
 
 
 def apply_consolidation_plan(
