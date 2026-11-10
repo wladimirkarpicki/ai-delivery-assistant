@@ -9,7 +9,7 @@ Werkzeug==3.1.9
 
 # Database
 sqlalchemy==2.1.8
-psycopg[binary]==3.3.6
+psycopg[binary]==3.3.8
 alembic==1.19.1
 
 # Analysis pipeline
