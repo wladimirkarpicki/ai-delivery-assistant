@@ -23,6 +23,22 @@ it is a prototype.
 
 ### Changed
 
+- `api.py` is no longer a monolith: 2212 lines down to 441, split into
+  `api_auth.py`, `api_deps.py`, `api_memory.py`, `api_analytics.py`,
+  `api_serializers.py`, `api_uploads.py` and four routers
+  (`api_routers_auth`, `api_routers_items`, `api_routers_meetings`,
+  `api_analytics`). What is left in `api.py` is the factory, CORS and
+  security middleware, the request-scope middleware, the SPA fallback and
+  the health route.
+- The auth state that made the split impossible now lives on `app.state`
+  rather than in closures over `create_app`, and is read per request. A
+  module-level global was the alternative and was rejected on evidence:
+  `secret_key` is generated per `create_app` call, the test suite builds
+  about ten apps in one process, and a global would have made all of them
+  share one signing key while every test kept passing.
+- `project_memory.py`: the three near-identical create-or-update cycles are
+  one skeleton driven by a spec table, and the 441-line consolidation
+  applier is a dispatcher plus four named branches.
 - `add_meeting` is a sync endpoint. It was `async def` with a blocking body
   making LLM calls with a 180 s timeout each, so one submission stalled
   every request including `/api/health`.
@@ -52,6 +68,21 @@ it is a prototype.
   without `unsafe-inline` in `script-src`, token revocation on logout, and
   a one-time bootstrap token for the first admin.
 - A leaked key was purged from git history and rotated.
+- Exception text no longer reaches the client on a provider or database
+  failure, including through the consolidation fallback warning, which is
+  the flow GitHub flagged as `py/stack-trace-exposure`.
+- `projects.name` and `meetings.source_filename` are clamped to their
+  column widths. They were the two operator-controlled columns the clamping
+  map did not cover.
+
+### Testing
+
+- The frontend has a real suite: 27 tests over 5 files, run by the CI
+  frontend job, so a regression in what a page renders is a failing build
+  rather than something a human notices.
+- The backend suite is 105 tests. The `ExceptionExposureTests` and
+  `RevocationPersistenceTests` classes exist because both bugs they cover
+  were invisible in a green suite first.
 
 ## [0.5.0] - 2026-08-01
 
