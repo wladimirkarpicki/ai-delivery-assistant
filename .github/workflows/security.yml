@@ -222,5 +222,11 @@ jobs:
       # resolves the solution tsconfig and checks nothing at all.
       - name: Typecheck
         run: pnpm run typecheck
+      # The tests are a gate, not a footnote: they cover the formatters the
+      # pages render with, the auth copy's refusal to grant a capability the
+      # server never issued, the cookie contract, the 401 redirect, and the
+      # 404 body's keyboard and heading roles.
+      - name: Test
+        run: pnpm test
       - name: Build
         run: pnpm run build
