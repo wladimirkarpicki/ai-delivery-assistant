@@ -20,7 +20,9 @@ Every function here takes the request (or the app) as an argument rather
 than reading anything at import time.
 """
 
+import os
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -32,6 +34,15 @@ from database import db
 from models import RevokedToken, User
 
 _bearer = HTTPBearer(auto_error=False)
+
+
+def _is_production() -> bool:
+    """
+    True when the process runs in production mode, where a missing or
+    predictable JWT_SECRET_KEY must stop startup instead of silently
+    degrading security.
+    """
+    return (os.environ.get("AIDA_ENV") or "").strip().lower() == "production"
 
 
 class UserFacingError(ValueError):
@@ -55,6 +66,51 @@ class UserFacingError(ValueError):
     it, and a router importing api.py would be a cycle: api.py imports the
     routers.
     """
+
+
+# ---------------------------------------------------------------------------
+# Login rate limiting (process-wide, deliberately not per app)
+
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_LOCKOUT_SECONDS = 15 * 60
+
+# In-process login rate limiting: username -> (failures, first failure ts).
+#
+# Module-level on purpose, and this is the one piece of state in the file
+# that is not per-app: a lockout counter shared between two apps in one
+# process costs a test nothing, while a signing key shared between them
+# would silently destroy the isolation the tests exist to check. The auth
+# router imports these helpers from here rather than through api.py.
+_failed_logins: dict = {}
+
+
+def _register_failed_login(username: str) -> None:
+    now = time.monotonic()
+    count, first_ts = _failed_logins.get(username, (0, now))
+
+    if now - first_ts > LOGIN_LOCKOUT_SECONDS:
+        count, first_ts = 0, now
+
+    _failed_logins[username] = (count + 1, first_ts)
+
+
+def _login_is_locked(username: str) -> bool:
+    entry = _failed_logins.get(username)
+
+    if entry is None:
+        return False
+
+    count, first_ts = entry
+
+    if time.monotonic() - first_ts > LOGIN_LOCKOUT_SECONDS:
+        _failed_logins.pop(username, None)
+        return False
+
+    return count >= LOGIN_MAX_ATTEMPTS
+
+
+def _clear_failed_logins(username: str) -> None:
+    _failed_logins.pop(username, None)
 
 
 COOKIE_NAME = "aida_token"
@@ -95,6 +151,26 @@ class SetupIn(CredentialsIn):
     # told their payload is malformed when in fact the token they sent is
     # simply wrong.
     bootstrap_token: str = ""
+
+
+class UserCreateIn(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=8)
+    role: str = "user"
+
+
+class UserPatchIn(BaseModel):
+    role: str | None = None
+    password: str | None = Field(default=None, min_length=8)
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str = Field(min_length=1)
+    password: str = Field(min_length=8)
+
+
+class PasswordResetIn(BaseModel):
+    password: str = Field(min_length=8)
 
 
 # ---------------------------------------------------------------------------

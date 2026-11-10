@@ -13,8 +13,8 @@ from typing import ClassVar
 from fastapi.testclient import TestClient
 from werkzeug.security import generate_password_hash
 
-import api as api_module
 from api import create_app
+from api_auth import _failed_logins
 from config import DEFAULT_MODEL, DEFAULT_PROVIDER
 from database import db
 from models import (
@@ -79,7 +79,7 @@ class ApiTests(unittest.TestCase):
 
     def setUp(self):
         # In-process login rate limiting must not leak between tests.
-        api_module._failed_logins.clear()
+        _failed_logins.clear()
 
         self.router = FakeRouter()
         self.app = create_app(self.router, "sqlite://")

@@ -40,6 +40,7 @@ import api as api_module
 import api_routers_meetings as meetings_module
 import config_loader
 import database
+from api_auth import _failed_logins
 from config import DEFAULT_MODEL
 from database import db
 from matching import cosine_similarity
@@ -230,7 +231,7 @@ class ConsolidationRegressionTests(unittest.TestCase):
         # The module-level bootstrap-token cache is process-wide; reset it
         # or a mutated env var leaks across tests.
         config_loader.reset_bootstrap_token()
-        api_module._failed_logins.clear()
+        _failed_logins.clear()
         self.router = _FixedRouter()
         self.app = api_module.create_app(self.router, "sqlite://")
         db.create_all()
@@ -383,7 +384,7 @@ class UploadFormatTests(unittest.TestCase):
 
     def setUp(self):
         config_loader.reset_bootstrap_token()
-        api_module._failed_logins.clear()
+        _failed_logins.clear()
         self.router = _FixedRouter()
         self.app = api_module.create_app(self.router, "sqlite://")
         db.create_all()
@@ -472,7 +473,7 @@ class SecurityHeaderTests(unittest.TestCase):
 
     def setUp(self):
         config_loader.reset_bootstrap_token()
-        api_module._failed_logins.clear()
+        _failed_logins.clear()
         self.app = api_module.create_app(_FixedRouter(), "sqlite://")
         db.create_all()
         self.client = TestClient(self.app)
@@ -592,7 +593,7 @@ class AuthCookieTests(unittest.TestCase):
 
     def setUp(self):
         config_loader.reset_bootstrap_token()
-        api_module._failed_logins.clear()
+        _failed_logins.clear()
         self.app = api_module.create_app(None, "sqlite://")
         db.create_all()
         self.client = TestClient(self.app)
@@ -678,7 +679,7 @@ class ExceptionExposureTests(unittest.TestCase):
 
     def setUp(self):
         config_loader.reset_bootstrap_token()
-        api_module._failed_logins.clear()
+        _failed_logins.clear()
         self.app = api_module.create_app(None, "sqlite://")
         db.create_all()
         self.client = TestClient(self.app)
@@ -907,7 +908,7 @@ class RevocationPersistenceTests(unittest.TestCase):
 
     def setUp(self):
         config_loader.reset_bootstrap_token()
-        api_module._failed_logins.clear()
+        _failed_logins.clear()
 
         # mkstemp rather than NamedTemporaryFile: the file has to outlive
         # the handle so a relaunched app can open the same database, which
@@ -1038,7 +1039,7 @@ class ActivityTimelineTests(unittest.TestCase):
 
     def setUp(self):
         config_loader.reset_bootstrap_token()
-        api_module._failed_logins.clear()
+        _failed_logins.clear()
         self.app = api_module.create_app(None, "sqlite://")
         db.create_all()
         self.client = TestClient(self.app)
@@ -1147,7 +1148,7 @@ class TelemetryTests(unittest.TestCase):
 
     def setUp(self):
         config_loader.reset_bootstrap_token()
-        api_module._failed_logins.clear()
+        _failed_logins.clear()
         self.app = api_module.create_app(_FixedRouter(), "sqlite://")
         db.create_all()
         self.client = TestClient(self.app)
