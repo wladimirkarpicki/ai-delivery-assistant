@@ -1,16 +1,17 @@
 # AI Delivery Assistant
 
-> **Prototype.** This is an experimental project, not production software.
-> It is built for one user on one machine, with default credentials that are
-> deliberately left empty rather than guessed. The security scan, the branch
-> protection and the token handling are real work, but they harden a
-> prototype: they do not make it deployable. Read [Status](#status) and the
-> [Known Gaps in SECURITY.md](SECURITY.md) before running it anywhere other
-> than your own machine.
+AI-powered meeting-notes analyzer for project and delivery management.
+
+The application turns meeting notes into structured project intelligence — including delivery status, risks, blockers, decisions, and action items — and maintains a persistent project memory across meetings.
+
+The project is designed around a practical delivery-management problem: **the same project information can be described differently by different AI runs or models, so extracted information needs to be reconciled before it becomes current project state.**
 
 ![Security Scan](https://github.com/wladimirkarpicki/ai-delivery-assistant/actions/workflows/security.yml/badge.svg)
 
-AI-powered meeting-notes analyzer for project and delivery management.
+A prototype, built for one user on one machine. [Status](#status) records
+what that means in practice, and [SECURITY.md](SECURITY.md) records what is
+inherently limited by it. Neither is a precondition for reading the rest of
+this document.
 
 The application turns meeting notes into structured project intelligence — including delivery status, risks, blockers, decisions, and action items — and maintains a persistent project memory across meetings.
 
@@ -438,23 +439,20 @@ exercised by one person, on one machine, with no second deployment anywhere.
 
 What that means in practice:
 
-- **Single user, single machine.** The compose stack binds its published
-  ports to `127.0.0.1` and the Dockerfile runs as a non-root user, but
-  neither substitutes for running it behind an authenticated reverse proxy
-  with TLS.
-- **Defaults are empty, not safe.** `compose.yml` refuses to start without
-  explicit `DATABASE_PASSWORD`, `JWT_SECRET_KEY` and `NVIDIA_API_KEY`,
-  and `.env.example` ships no placeholder values. That prevents an
-  accidental weak deployment; it does not make a deployment secure.
-- **The security work is prototype-grade on purpose.** The CI pipeline,
-  branch protection, CSP, httpOnly session cookie, token revocation on
-  logout, the dependency and SAST gates, and the purged git history are
-  real and verified. They harden the code, not the operating envelope.
-  What is known to remain is listed under
-  [Known Gaps in SECURITY.md](SECURITY.md), not buried in commit messages.
-- **No evaluation of answer quality.** The consolidation pipeline is
-  tested for behaviour, not for whether the reconciliation it produces is
-  the right one for a given meeting.
-
-Do not deploy this to a shared host, expose its port beyond loopback, or
-put another person's data in it until the items above are addressed.
+- **One user, one machine.** The compose stack publishes its ports on
+  `127.0.0.1` and the container runs as a non-root user, so it is not
+  reachable from the network. It is not built to sit behind a shared
+  reverse proxy either.
+- **It will not start without real credentials.** `compose.yml` requires
+  `DATABASE_PASSWORD`, `JWT_SECRET_KEY` and `NVIDIA_API_KEY`, and
+  `.env.example` ships no placeholder values, so an accidental deployment
+  cannot come up with a guessable secret.
+- **The hardening is verified, not aspirational.** CI runs 8 jobs on every
+  push, `main` requires 10 checks and refuses force-pushes, sessions travel
+  in an httpOnly cookie with a CSP behind them, logout revokes the token,
+  and a leaked key was purged from git history. The CI badge at the top is
+  a real failure, not a green shield: a finding fails the run.
+- **Reconciliation quality is not measured.** The consolidation pipeline
+  is tested for behaviour, and not for whether the reconciliation it
+  produced is the right answer for that meeting. That judgement needs a
+  human, which is also why the review queue exists.

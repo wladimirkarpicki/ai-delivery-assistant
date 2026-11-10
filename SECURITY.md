@@ -52,24 +52,56 @@ We acknowledge a new report within 72 hours and aim to provide an initial assess
 
 ## Known Gaps
 
-### Token revocation is in-memory and does not survive a restart
+Both entries this section used to hold are closed. They are recorded here
+rather than deleted, because the state they describe is the state a reader
+is most likely to assume and it is worth saying explicitly that it is not
+the case.
 
-`/api/auth/logout` records the token id in an in-process set and rejects
-that id on every later request, so a token copied out of one browser stops
-working everywhere. The set is not persisted.
+### Token revocation survives a restart
 
-After a restart a revoked token is accepted again until its own `exp`, which
-is `TOKEN_TTL_HOURS` (default 12). The practical exposure is therefore
-bounded by the token lifetime, which is also the current mitigation: keep
-`TOKEN_TTL_HOURS` short for any deployment where logging out is expected to
-take effect immediately.
+Revocation used to be recorded in a set inside the process, so after a
+restart a signed-out token worked again until its own expiry, up to
+`TOKEN_TTL_HOURS`. That set is now a cache rather than the record: a
+logout writes the token's id and its expiry to a `revoked_tokens` table,
+and the check reads the cache first and the table on a miss, so a restart
+no longer re-accepts a token. Rows whose token has already lapsed are
+pruned on logout rather than accumulating.
 
-A production fix needs the revocation list persisted, either as a table
-checked on each request or an external store. That is not implemented.
+One genuine limitation remains, and it is the same class: the pruned set is
+per process, so a token revoked by one worker is not visible to another
+until that worker commits the row, which it does on the next logout or
+check that reaches it. With a single worker behind the compose stack that
+is not reachable. Running more than one worker needs the check to read the
+table without a cache in front of it.
 
-### The activity timeline reads a 24-month window
+### The activity timeline reports every month
 
-`/api/metrics` bounds `month_counts` to the trailing 24 months rather than
-reading every row. Rows older than the window are absent from the timeline
-by design, not by accident, and the window is the constant to change if a
-longer history is needed.
+`month_counts` used to read every `created_at` into Python and count there,
+which is O(rows) per request on a table that grows forever. It was then
+bounded to a trailing 24 months, which fixed the cost and silently dropped
+older months, so a month older than the window looked identical to a month
+with nothing in it. The query now aggregates in the database with `GROUP BY`,
+so the work is proportional to how many months exist rather than how many
+rows, and every month with data is reported.
+
+The exercise here is worth recording: the first fix traded one silent bug
+for another, and the test written for it pinned the wrong behaviour. The
+test asserted that an old month was absent, which is what made the loss
+look correct.
+
+## What is inherently limited
+
+This is a prototype for one user on one machine. The following are not
+defects but consequences of that scope, listed so nobody has to discover
+them:
+
+- There is no multi-user authority model beyond the two roles in the
+  `users` table, and no audit trail of who read what.
+- The LLM provider is a single fixed model. There is no fallback provider,
+  so a provider outage means no analysis until it returns.
+- The consolidation pipeline is the correctness-critical part and it is
+  the least covered by tests, because the interesting cases need a real
+  model to produce them.
+- There is no deployment artefact beyond the compose file, no migration
+  rollback story beyond `alembic downgrade`, and no backup or restore
+  procedure.
