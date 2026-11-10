@@ -21,6 +21,7 @@ keep.
 import base64
 import hashlib
 import io
+import json
 import os
 import pathlib
 import tempfile
@@ -695,9 +696,72 @@ class ExceptionExposureTests(unittest.TestCase):
         self.client.headers["Authorization"] = f"Bearer {self.token}"
 
     def tearDown(self):
+        for patcher in getattr(self, "_patchers", []):
+            patcher.stop()
         db.session.remove()
         db.drop_all()
         config_loader.reset_bootstrap_token()
+
+    def _bypass_model_list(self):
+        """
+        Satisfy the model-availability guard without calling the provider.
+
+        Without this these tests pass in CI for the wrong reason. CI has no
+        NVIDIA_API_KEY, so the handler answers "model list unavailable"
+        before it ever reaches the call being mocked, and the assertions
+        about a 400 with a fixed sentence still pass. Locally, where a key
+        exists, they pass for the right reason. The suite was green in both
+        places while only one of them was telling the truth.
+        """
+
+        self._patchers = [
+            mock.patch.object(
+                api_module,
+                "get_available_models",
+                return_value=[api_module.DEFAULT_MODEL],
+            )
+        ]
+        for patcher in self._patchers:
+            patcher.start()
+
+    def _use_fake_analysis(self):
+        """
+        The model-list bypass plus a analysis the app can parse.
+
+        Used where the analysis has to succeed so the code under test is
+        the next step in the pipeline, which is what the consolidation
+        fallback test needs.
+        """
+
+        self._bypass_model_list()
+        # One finding on purpose: the consolidation step only runs when
+        # there is something to consolidate, so an analysis with nothing
+        # in it would take the no-consolidation path and the warning the
+        # test looks for would never be produced.
+        analysis = {
+            "project_status": "on_track",
+            "progress_summary": "s",
+            "executive_summary": "s",
+            "risks": [
+                {
+                    "title": "QA is short one tester",
+                    "description": "d",
+                    "impact": "medium",
+                    "mitigation": "m",
+                    "status": "open",
+                }
+            ],
+            "blockers": [],
+            "action_items": [],
+            "decisions": [],
+            "completed_items": [],
+            "in_progress_items": [],
+        }
+        patcher = mock.patch.object(
+            api_module, "analyze_document", return_value=json.dumps(analysis)
+        )
+        patcher.start()
+        self._patchers.append(patcher)
 
     def test_validation_message_reaches_the_user(self):
         project = self.client.post(
@@ -718,6 +782,10 @@ class ExceptionExposureTests(unittest.TestCase):
 
         # A provider failure raises an httpx error, not a ValueError. The
         # response must be a fixed sentence with no trace of the cause.
+        # Only the model-list guard is bypassed here: the provider call
+        # itself has to run, because it is what fails.
+        self._bypass_model_list()
+
         def boom(*args, **kwargs):
             raise httpx.HTTPStatusError(
                 "upstream returned 429 with an internal path /internal/v1",
@@ -748,6 +816,7 @@ class ExceptionExposureTests(unittest.TestCase):
         def boom(*args, **kwargs):
             raise RuntimeError("database password is hunter2 at /var/secret")
 
+        self._bypass_model_list()
         with mock.patch.object(api_module.ModelRouter, "generate", boom):
             response = self.client.post(
                 f"/api/projects/{project}/meetings",
@@ -792,6 +861,8 @@ class ExceptionExposureTests(unittest.TestCase):
 
         # The analysis call succeeds and produces something consolidable;
         # the consolidation call then fails with a text-bearing exception.
+        self._use_fake_analysis()
+
         def fail(*args, **kwargs):
             raise RuntimeError("consolidation hit /internal/v1 at 10.0.0.9")
 
