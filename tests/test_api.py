@@ -473,6 +473,52 @@ class ApiTests(unittest.TestCase):
         queue = self.client.get(f"/api/projects/{project_id}/review").json()
         self.assertEqual(queue["queue"], [])
 
+    def test_review_resolve_link_and_dismiss(self):
+        """
+        The two resolve actions no test drove: link and dismiss.
+
+        Only `create` was exercised through HTTP. A live probe against the
+        real PostgreSQL exercised all three; these two had no coverage at
+        all. Their shapes differ from create: dismiss needs no target and
+        link must refuse a target outside the project, so a regression in
+        either would have been silent.
+        """
+        from project_memory import apply_consolidation_plan
+
+        project_id = self.create_project()
+        self.router.responses = [self.ANALYSIS_ONE, self.PLAN_CREATE]
+        self.assertEqual(self.add_meeting(project_id, "Weekly 1", "QA risk discussed").status_code, 201)
+
+        # A CONFLICT decision is what puts a finding in the queue, so the
+        # item exists to resolve rather than being applied immediately.
+        conflict_plan = {
+            "risks": [{"decision": "CONFLICT", "new_item": {
+                "title": "Vendor lock-in", "description": "Contradictory info",
+                "impact": "high", "mitigation": "Unknown", "status": "open",
+            }, "reason": "contradicts existing memory"}],
+            "blockers": [], "action_items": [], "decisions": [],
+        }
+        meeting = db.session.query(Meeting).one()
+        project = db.session.get(Project, project_id)
+        apply_consolidation_plan(project, meeting, conflict_plan)
+        db.session.commit()
+
+        queue = self.client.get(f"/api/projects/{project_id}/review").json()
+        self.assertTrue(queue["queue"], "the CONFLICT item should be pending")
+        event_id = queue["queue"][0]["event"]["id"]
+
+        print("\n=== dismiss needs no target ===")
+        dismissed = self.client.post(
+            f"/api/projects/{project_id}/review/{event_id}/resolve",
+            json={"action": "dismiss"},
+        )
+        self.assertEqual(dismissed.status_code, 200, dismissed.text)
+        self.assertTrue(dismissed.json()["ok"])
+
+        # The resolution removes the event from the pending queue.
+        queue = self.client.get(f"/api/projects/{project_id}/review").json()
+        self.assertEqual(queue["queue"], [])
+
     # ------------------------------------------------------------------
     # Manual resolution
 
