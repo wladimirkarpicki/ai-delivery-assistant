@@ -43,7 +43,7 @@ from sqlalchemy.orm import selectinload
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from analyzer import analyze_document, parse_analysis
-from config import DEFAULT_MODEL, DEFAULT_PROVIDER, EMBEDDING_MODEL
+from config import DEFAULT_MODEL, DEFAULT_PROVIDER, EMBEDDING_MODEL, __version__
 from config_loader import (
     get_bootstrap_token,
     get_jwt_secret_key,
@@ -643,6 +643,13 @@ def create_app(router_instance=None, database_url=None):
     # carries a timestamp, a level and a logger name. Before this the
     # four loggers in the codebase ran on Python's defaults.
     configure_logging()
+
+    # The version, on the first line the process writes. A bug report that
+    # does not name a version cannot be acted on, and before this there was
+    # nothing in the log or the response that carried it.
+    logging.getLogger("ai-delivery-assistant.startup").info(
+        "AI Delivery Assistant %s starting", __version__
+    )
 
     # The Vite dev server proxies /api in development; production is
     # same-origin. localhost origins are allowed for convenience.
