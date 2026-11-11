@@ -1020,6 +1020,50 @@ class RevocationPersistenceTests(unittest.TestCase):
 
         self.assertEqual(len(db.session.query(RevokedToken).all()), 1)
 
+    def test_parse_due_date_keeps_the_stored_date_when_the_finding_has_none(self):
+        """
+        The two fallback shapes of _parse_due_date, which no test covered.
+
+        Only a valid inbound date was pinned. The two shapes that matter
+        more are the ones that lose data: a finding with no date must not
+        clear a stored one, and a date that will not parse must fall back
+        to the stored value rather than to None.
+        """
+        from datetime import date
+
+        from project_memory import _parse_due_date
+
+        # The helper takes the existing row, not the stored date: it reads
+        # getattr(existing, "due_date"), so passing a bare date silently
+        # yields None and the whole fallback disappears.
+        class Row:
+            def __init__(self, due_date):
+                self.due_date = due_date
+
+        stored = date(2026, 8, 15)
+        row = Row(stored)
+
+        # A finding with no date at all keeps what was stored.
+        self.assertEqual(_parse_due_date({}, row), stored)
+        self.assertEqual(_parse_due_date({"due_date": None}, row), stored)
+        self.assertEqual(_parse_due_date({"due_date": ""}, row), stored)
+
+        # A date that will not parse also keeps the stored value, rather
+        # than silently dropping it.
+        self.assertEqual(_parse_due_date({"due_date": "Friday"}, row), stored)
+        self.assertEqual(_parse_due_date({"due_date": "not-a-date"}, row), stored)
+
+        # With nothing stored, a bad date yields None rather than raising.
+        self.assertIsNone(_parse_due_date({"due_date": "garbage"}, Row(None)))
+
+    def test_parse_due_date_parses_a_valid_iso_date(self):
+        from datetime import date
+
+        from project_memory import _parse_due_date
+
+        parsed = _parse_due_date({"due_date": "2026-09-30"}, None)
+        self.assertEqual(parsed, date(2026, 9, 30))
+
     def test_prune_returns_the_count_it_removed(self):
         """
         The return value of the prune, which no test reads.
