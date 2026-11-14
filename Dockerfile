@@ -8,8 +8,12 @@ WORKDIR /app/frontend
 # install pnpm directly with npm instead.
 RUN npm install -g pnpm@11.7.0
 
-# Lockfile-first layer for dependency caching.
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+# Lockfile-first layer for dependency caching. pnpm-workspace.yaml travels
+# with the pair: pnpm 11 reads it for build settings (allowBuilds), and the
+# frozen-lockfile install was generated with it present, so the install fails
+# without it in the build context. ai-inventory-management's Dockerfile
+# copies the same trio for the same reason.
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY frontend/ ./
