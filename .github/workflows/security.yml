@@ -141,9 +141,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
       # The suite was committed but never executed in CI before this.
-      # Coverage is reported, not gated: the current 82% total hides a 41%
-      # in project_memory.py, and a threshold would lock that in rather
-      # than surface it. Raise it deliberately once that module is covered.
+      # Coverage is reported, not gated: the current 91% total still
+      # hides a 68% in project_memory.py, and a threshold would lock
+      # that in rather than surface it. Raise it deliberately once that
+      # module is covered.
       - name: Run Pytest
         run: python -m pytest -q --cov=. --cov-report=term-missing
 
