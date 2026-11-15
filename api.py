@@ -158,11 +158,12 @@ def create_app(router_instance=None, database_url=None):
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
-        # A CSP with no unsafe-inline in script-src is what makes the
-        # next layer of defence real: the client reads the bearer token
-        # from localStorage today, so any injected script can simply read
-        # it back out. This header costs nothing and lands independently
-        # of the cookie migration.
+        # A CSP with no unsafe-inline in script-src is what keeps an
+        # injected script from running at all. There is no token in
+        # localStorage for one to read back out any more: the bearer
+        # token lives in the httpOnly, SameSite=strict session cookie
+        # set by api_auth, so this header is the standing layer of
+        # defence and the cookie migration it predates is now done.
         #
         # style-src stays 'unsafe-inline' because the design assets in
         # static/ carry inline style attributes; tightening that is a
