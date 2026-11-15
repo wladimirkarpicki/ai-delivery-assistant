@@ -219,11 +219,23 @@ present with the model's columns and its PK (`revoked_tokens_pkey`);
 `canonical_title` columns from revision `1912a237ecb7`; `alembic upgrade
 head` replays 0 revisions; and through the published port 8001: health
 200, setup 200, login 200, `/api/auth/me` 200, project create **201**,
-logout 200, `/api/auth/me` **401 "Session has ended."**, `docker compose
-restart app`, `/api/auth/me` **401 again** with the process cache cold,
-`/metrics` 200 with `aida_projects 1`, and one `revoked_tokens` row with
-a 12 h expiry. Meeting submit returned 400 — no NVIDIA_API_KEY on this
-host — recorded, not fabricated. The full command log is on the card.
+logout 200, `/api/auth/me` **401 "Session has ended.""**, and one
+`revoked_tokens` row with a 12 h expiry. Meeting submit returned 400 —
+the placeholder NVIDIA key in `.env` is rejected by
+`integrate.api.nvidia.com` (the app log shows the API's 401) and the
+handler rolls the meeting back — recorded, not fabricated.
+
+The post-restart steps of the first probe run (20:21Z) are recorded as
+they ran: the probe slept a fixed 6s after `docker compose restart app`
+and both requests returned **000** — the app was still booting
+(`FAIL auth_me_post_restart -> 000`, `FAIL metrics -> 000` in that run's
+raw log, preserved on the card). The verified post-restart evidence comes
+from the rework run taken **after the container was healthy**
+(`/api/health` answered 200 after 12s, 6 cold-boot polls): `/api/auth/me`
+**401 "Session has ended."** with the process cache cold, `/metrics` 200
+with `aida_projects 1`. That run's raw log is preserved on the card too,
+and the round-1 review independently reproduced the full sequence on its
+own clean-volume boot. The full command log is on the card.
 
 ## One elevated command left: the PostgreSQL bind
 
