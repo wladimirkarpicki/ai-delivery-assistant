@@ -38,3 +38,7 @@ coverage.json
 # database so a relaunched app reads the same rows, which is what makes them
 # test a restart rather than a reset; a failing run leaves them behind.
 tmp*
+
+# Verification evidence from the compose-rebuild runs (cookies, tokens,
+# command logs). Local only; never commit it.
+evidence/
