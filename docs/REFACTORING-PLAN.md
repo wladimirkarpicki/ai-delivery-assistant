@@ -77,7 +77,7 @@ written.
 The standing lesson: verify a database change by connecting the way the
 application does, never from inside the database container.
 
-## Partly closed: revocation proven, the compose path not rebuilt
+## Closed on 2026-11-15: the compose path rebuilt from HEAD and proven
 
 Token revocation is persisted to a `revoked_tokens` table and the test
 suite passes, but the suite runs on SQLite. That is the dialect which
@@ -91,12 +91,13 @@ loaded and the table did not exist in the running database at all. That
 is the state described below under the credential drift, and it is why
 the container path was never a proof of anything.
 
-The blocker to closing it is disk space, not code. The `C:` drive had
-28 MB free of 75.2 GB, which is why Docker Desktop answered `unable to
-start` — its WSL vhdx had no room to operate. Safe caches were emptied for
-1.39 GB (npm, uv, pip, 15k stale temp files, browser caches) and Docker was
-relaunched from a full process kill and `wsl --shutdown`, and the engine
-still does not come up, so more is needed.
+**Correction (2026-11-15), dated rather than silently rewritten.** The
+disk figures above were stale for this host even then: `C:` had ~93 GiB
+free of 159 GiB, and no `postgresql-x64-18` service existed at all. The
+real blocker was Docker's WSL precondition — no WSL distribution was
+installed, so the engine answered `unable to start` until the owner
+installed WSL (engine 29.9.3, Compose v5.7.0). Kept in the record,
+because a wrong root cause left standing is worse than no record.
 
 Two things are deliberately not deleted to find it, because neither is
 mine to remove: `hermes` (4.97 GB, a third-party agent with an update lock
@@ -118,12 +119,57 @@ engine class and a real PostgreSQL rather than the test harness:
   401 again, while login still worked. The row was in the table, so the
   answer came from PostgreSQL and not from memory.
 
-The remaining gap is therefore not the fix but the artifact: the compose
-stack has not been rebuilt from HEAD and its own container database has
-not been shown to boot from `schema.sql` with `revoked_tokens` present.
-To close that: free several GB, then `docker builder prune -af`, re-pull
-`node:22-alpine` and `python:3.13-slim`, `docker compose build`, and run
-the same probe through the published port.
+The remaining gap was therefore not the fix but the artifact. On
+2026-11-15 it was closed, against main at
+`444ec3b56608aa091e1e2c57935119806b129961`. That sha is pushed:
+`origin/main` equals it (a plain `git push` moves the remote on this
+host — `gh` is absent, but push does not need it). The local-only piece
+is the evidence branch `w1-compose-verification` (one docs commit on
+top of that sha, unpushed), delivered to the owner as a patch.
+Commands and full outputs live in `evidence/` (gitignored, local):
+
+- `docker builder prune -af` (build cache was already 0B on this host),
+  `docker pull node:22-alpine` and `python:3.13-slim` (fresh digests),
+  `docker compose build` from that sha — exit 0, image
+  `ai-delivery-assistant-app:latest`.
+- `docker compose down -v` (drops `pgdata_ai2`), `docker compose up -d`:
+  the db logged `running /docker-entrypoint-initdb.d/schema.sql` at
+  13:33:43Z and both containers came up `healthy`.
+- `revoked_tokens` verified the way the app connects — from inside the
+  **app** container over TCP to `db:5432` with scram-sha-256, never from
+  the db container, whose socket is `trust`: table present; columns
+  `jti character varying(64) NOT NULL` and
+  `expires_at timestamp with time zone NOT NULL`.
+- Full probe through the published port 8001: health 200, setup 200,
+  login 200 (cookie), `/api/auth/me` 200 with that token, project create
+  201, logout 200, `/api/auth/me` **401 "Session has ended."**,
+  `docker compose restart app`, `/api/auth/me` **401 again** with the
+  process cache empty and one row visible in the table (jti, expiry 12h
+  out) — revocation is answered from PostgreSQL, not from memory.
+  `/metrics` 200 with `aida_projects 1`.
+- `meeting_submit` returned **400, not 201**: no NVIDIA_API_KEY exists
+  on this host (placeholder in `.env`), the analysis call fails and the
+  handler rolls back cleanly ("The meeting was not saved"). An
+  owner-supplied key closes that step; it was not fabricated.
+- CI re-fetched 2026-11-15 via GitHub REST on the build sha itself,
+  `444ec3b56608aa091e1e2c57935119806b129961`: **11/11 check runs
+  success** — the 8 `security.yml` jobs (Static Analysis (Bandit),
+  Dependency Scan (Safety), Code Quality (Ruff), Type Checking
+  (Mypy), Tests (Pytest), Migrations (Alembic), Frontend Audit (pnpm
+  audit), Frontend Typecheck and Build) plus 3 CodeQL Analyze runs
+  (python, javascript-typescript, actions), all started
+  2026-11-15T13:09Z. Background: the previous pushed sha
+  `08c9bba663ee1da3091564c4ac3e17d182cdfae2`, one behind `origin/main`
+  now, shows 14/14 across the same 11 jobs (duplicate CodeQL re-runs).
+
+**Found during this run, recorded and not fixed (out of scope here):**
+`schema.sql` creates `revoked_tokens` **without** the primary key. The
+model and the migration `d4e7f1a2b3c5` both declare `jti` as the PK and
+the schema's own comment says a check is "one index lookup", but
+`schema.sql` lines 398-401 create the table with two NOT NULL columns
+and no constraint — verified live: `pg_indexes` for the table returns
+empty on a fresh container, and the container never runs alembic, so
+the stack does not get the model's index.
 
 ## One elevated command left: the PostgreSQL bind
 

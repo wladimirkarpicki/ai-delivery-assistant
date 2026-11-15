@@ -18,10 +18,16 @@ it is a prototype.
   as `X-Request-ID`, so a user-reported failure can be found in the log.
 - `revoked_tokens` table with a migration, so a logout survives a process
   restart instead of only this process. Verified by the migration chain
-  applying to a real PostgreSQL and by a process restarted with an empty
-  cache refusing a revoked token; the compose stack has not been rebuilt
-  and shown to boot from `schema.sql` with the table present, which is
-  recorded as the remaining step in `docs/REFACTORING-PLAN.md`.
+  applying to a real PostgreSQL, by a process restarted with an empty
+  cache refusing a revoked token, and — since 2026-11-15 — by the compose
+  stack rebuilt from HEAD on a clean volume: `schema.sql` first-init,
+  `revoked_tokens` present over the app's own TCP scram-sha-256
+  connection, and the full probe through port 8001 (setup, login, project
+  create, logout, 401 both before and after an app-container restart,
+  `/metrics` showing the row). Meeting submit is the one probe step not
+  yet proven — no NVIDIA_API_KEY on the host — and the missing
+  primary key on `revoked_tokens` in `schema.sql` is recorded as a
+  finding; both in `docs/REFACTORING-PLAN.md`.
 - `docs/REFACTORING-PLAN.md`: what has been done, what is in progress, what
   is not started, and an explicit non-goals list.
 
