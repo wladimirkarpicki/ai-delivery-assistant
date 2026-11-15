@@ -114,16 +114,26 @@ docker compose exec db psql -U "$DATABASE_USER" "$DATABASE_NAME" -c '\dt'   # sc
 
 ## 4. Known risks to watch on first boot (from the audit)
 
-1. **schema.sql provenance — VERIFIED 2026-11-15**: the dump (pg_dump 18.4)
-   loads cleanly on postgres:16. The compose stack booted PostgreSQL 16.16
-   with schema.sql on a fresh volume; the db logs show
-   `running /docker-entrypoint-initdb.d/schema.sql` followed by every
-   CREATE TABLE/SEQUENCE, and the stack came up healthy with the e2e smoke
-   green (6/6 PASS, first-admin creation included). No regeneration is
-   needed; this audit risk (R1) is closed for the Docker path.
-2. **Alembic is orphaned**: schema.sql creates alembic_version with no row and
-   the app never runs migrations at startup. Treat schema.sql as the source of
-   truth until this is decided (audit work-plan item 3).
+1. **schema.sql provenance — REGENERATED on PG16 2026-11-15 (card t_873e9e73,
+   finding R1)**. The old file was a pg_dump 18.4 dump (VERSION-MISMATCH
+   header) loaded by the postgres:16 init mount; it also created
+   `revoked_tokens` without the model's primary key and left
+   `alembic_version` empty. It is now a pg_dump 16.16 of head state built
+   from the app's own migration chain, and it carries exactly one
+   `alembic_version` row — the head `d4e7f1a2b3c5` (finding R2). Verified
+   by a clean-volume boot (`docker compose down -v`, `up -d`): the db logs
+   the `running /docker-entrypoint-initdb.d/schema.sql` first-init, every
+   CREATE TABLE/SEQUENCE follows, and the stack comes up healthy.
+2. **Schema bootstrap at startup (finding R8)**: the app container runs
+   `alembic upgrade head` before uvicorn (Dockerfile CMD; `migrations/`
+   and `alembic.ini` ship in the image — `.dockerignore` used to exclude
+   them). On a fresh volume the step is a no-op (the dump already stamped
+   the head — `alembic current` reports `d4e7f1a2b3c5 (head)` and
+   `alembic upgrade head` replays 0 revisions); on an older volume it
+   applies the missing revisions instead of leaving the schema behind.
+   Never wire `Base.metadata.create_all` as well: two bootstrap paths
+   drift apart silently, and a dump/migration mismatch is exactly how
+   `revoked_tokens` lost its PK.
 3. **A developer `.env` on the host no longer changes test results** — tests/
    conftest.py neutralises the loader for the test process so the pinned
    tokens survive, the production override path is unchanged, and the

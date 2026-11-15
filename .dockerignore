@@ -14,4 +14,5 @@ frontend/node_modules
 frontend/dist
 monitoring
 *.md
-migrations
+# migrations/ intentionally NOT excluded: the image runs `alembic upgrade
+# head` at container startup (R8), so the chain must ship in the image.

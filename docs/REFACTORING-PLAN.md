@@ -169,7 +169,61 @@ the schema's own comment says a check is "one index lookup", but
 `schema.sql` lines 398-401 create the table with two NOT NULL columns
 and no constraint — verified live: `pg_indexes` for the table returns
 empty on a fresh container, and the container never runs alembic, so
-the stack does not get the model's index.
+the stack does not get the model's index. **Closed on 2026-11-15** by
+card `t_873e9e73` (the section below): the regenerated `schema.sql`
+carries `PRIMARY KEY (jti)` on `revoked_tokens`, and the fresh-boot
+verification shows `revoked_tokens_pkey` live.
+
+## Closed on 2026-11-15: R1/R2/R8 — schema.sql regenerated on PG16, head stamped, one bootstrap path wired
+
+Three audit findings in the data layer, closed together on card
+`t_873e9e73` because they all describe the same gap between `schema.sql`
+and the migration chain.
+
+- **R1 (HIGH)** — `schema.sql` is now a PostgreSQL 16.16 `pg_dump`, made
+  against the running `postgres:16` instance (server and pg_dump both
+  16.16, per the dump header). It replaces the pg_dump 18.4 file with
+  the VERSION-MISMATCH header. The init-mount contract is unchanged: a
+  fresh container still loads the file with plain psql.
+- **R2 (HIGH)** — the dump carries `alembic_version` with exactly one
+  row: the head `d4e7f1a2b3c5`. The file was produced by building head
+  state in a scratch database from the app's own migration chain and
+  dumping that database, so the stamp is the database's real head, not a
+  hand-written line.
+- **R8 (MEDIUM)** — the container now runs `alembic upgrade head` before
+  uvicorn (Dockerfile CMD). `migrations/` and `alembic.ini` ship in the
+  image, which `.dockerignore` previously excluded — that exclusion is
+  why the running container could not run alembic at all.
+
+**The choice: `alembic upgrade head`, not `Base.metadata.create_all`.**
+`create_all` at startup creates absent tables and then stays silent about
+columns, constraints and indexes forever — the exact way `revoked_tokens`
+lost its primary key in the first place: the old dump had no PK and
+nothing ever added it. Alembic keeps one source of truth that records
+itself in `alembic_version`, which is what makes the R2 stamp meaningful
+rather than decorative. The risk of the choice is real and is bounded by
+this change: a volume whose `alembic_version` is empty would replay all
+six revisions onto an already-built schema and fail. That state only
+existed on volumes initialised from the old dump; every fresh volume now
+initializes from the stamped one, and any surviving old volume is brought
+up to the stamped state by that same startup step or a one-time
+`alembic stamp head`.
+
+Proven on 2026-11-15 by rebooting the compose stack on a clean volume
+(`docker compose down -v`, `up -d`, db first-init
+`running /docker-entrypoint-initdb.d/schema.sql`), with every database
+check run the way the app connects — from inside the **app** container
+over TCP scram-sha-256, never from the db container: `revoked_tokens`
+present with the model's columns and its PK (`revoked_tokens_pkey`);
+`alembic_version` = `['d4e7f1a2b3c5']`; all 12 head tables including the
+`canonical_title` columns from revision `1912a237ecb7`; `alembic upgrade
+head` replays 0 revisions; and through the published port 8001: health
+200, setup 200, login 200, `/api/auth/me` 200, project create **201**,
+logout 200, `/api/auth/me` **401 "Session has ended."**, `docker compose
+restart app`, `/api/auth/me` **401 again** with the process cache cold,
+`/metrics` 200 with `aida_projects 1`, and one `revoked_tokens` row with
+a 12 h expiry. Meeting submit returned 400 — no NVIDIA_API_KEY on this
+host — recorded, not fabricated. The full command log is on the card.
 
 ## One elevated command left: the PostgreSQL bind
 
