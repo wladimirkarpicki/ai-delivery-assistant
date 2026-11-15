@@ -25,9 +25,9 @@ it is a prototype.
   connection, and the full probe through port 8001 (setup, login, project
   create, logout, 401 both before and after an app-container restart,
   `/metrics` showing the row). Meeting submit is the one probe step not
-  yet proven — no NVIDIA_API_KEY on the host — and the missing
-  primary key on `revoked_tokens` in `schema.sql` is recorded as a
-  finding; both in `docs/REFACTORING-PLAN.md`.
+    yet proven — no NVIDIA_API_KEY on the host — and is described in
+    `docs/REFACTORING-PLAN.md`. The `revoked_tokens` primary key that
+    `schema.sql` was missing is closed by the regeneration below.
 - `docs/REFACTORING-PLAN.md`: what has been done, what is in progress, what
   is not started, and an explicit non-goals list.
 
@@ -65,6 +65,17 @@ it is a prototype.
 - PostgreSQL 16 compatibility of `schema.sql`: two statements produced by
   `pg_dump` 18 (`transaction_timeout`, `\unrestrict`) aborted the schema
   load, so a fresh container never came up.
+- `schema.sql` regenerated on PostgreSQL 16.16 from head state, closing
+  three audit findings at once (R1/R2/R8): the file was a pg_dump 18.4
+  dump (R1), it created `alembic_version` with zero rows so the first
+  `alembic upgrade head` anyone ran replayed all six revisions onto an
+  already-built schema (R2), and nothing bootstrapped the schema at
+  startup (R8). It now carries exactly one `alembic_version` row — the
+  head `d4e7f1a2b3c5` — and the `revoked_tokens` primary key the model
+  declares, and the app container runs `alembic upgrade head` at startup
+  (a proven no-op on a fresh volume). Verified on a clean-volume boot
+  with the checks run over the app's own TCP scram-sha-256 connection;
+  see `docs/REFACTORING-PLAN.md`.
 - Exception text no longer reaches the client on provider or database
   failures, including through the consolidation fallback warning.
 - `projects.name` and `meetings.source_filename` are clamped to their
