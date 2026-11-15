@@ -64,13 +64,32 @@ E2E means exercising the *running dockerized stack* over HTTP:
 
 ```bash
 # 0. stack from §2 must be up and healthy
-# 1. app-side unit suite (host, no stack needed) — run once per change
-python -m pytest -q
+# 1. app-side unit suite — run once per change. The host path only works if
+#    the host python has the requirements installed (the Hermes-managed
+#    python does not ship pytest). Verified path, no host deps: run inside
+#    the image — requirements.txt ships pytest itself:
+docker compose cp tests app:/app/tests
+docker compose cp frontend/index.html app:/app/frontend/index.html
+docker compose exec -T app python -m pytest tests -q -p no:cacheprovider
+#    One test (test_csp_pins_the_one_inline_script_by_hash) reads
+#    frontend/index.html, which the image does not ship by design; without
+#    the second cp it fails with FileNotFoundError. That failure is an
+#    image-content gap, not a code defect (it passes on the host and with
+#    the source copied in).
 # 2. HTTP smoke against the running stack (BOOTSTRAP_TOKEN from .env)
 set -a && . ./.env && set +a
 python scripts/e2e_smoke.py
 # expect: 6 PASS lines and "ALL CHECKS PASSED", exit 0
 ```
+
+**The smoke assumes a fresh database.** POST /api/auth/setup is
+first-user-wins: if the `users` table already has a row (a previous run, or
+another probe — e.g. owner-side W1 probe admins named
+`admin_w1-<timestamp>`), setup correctly answers `400 Setup is already
+completed` and the smoke's login then 401s for the nonexistent smoke user.
+That is correct app behavior, not a smoke failure; to re-verify fresh-boot
+behavior deliberately, reset with `docker compose down -v` (drops
+pgdata_ai2 — the data in it goes away).
 
 `scripts/e2e_smoke.py` checks, in order: GET /api/health →
 POST /api/auth/setup (first admin) → POST /api/auth/login →
@@ -89,12 +108,13 @@ docker compose exec db psql -U "$DATABASE_USER" "$DATABASE_NAME" -c '\dt'   # sc
 
 ## 4. Known risks to watch on first boot (from the audit)
 
-1. **schema.sql provenance**: it is a pg_dump **18.4** dump loaded by the
-   postgres:16 init mount. No PG18-only syntax was found in it (no jsonb /
-   generated / identity / procedure constructs — the `\restrict` line is a
-   SQL comment), so it is expected to load, but it is unverified against 16.
-   If the `db` container exits during first init, regenerate on PostgreSQL 16:
-   dump the schema from the running container and commit the result.
+1. **schema.sql provenance — VERIFIED 2026-11-15**: the dump (pg_dump 18.4)
+   loads cleanly on postgres:16. The compose stack booted PostgreSQL 16.16
+   with schema.sql on a fresh volume; the db logs show
+   `running /docker-entrypoint-initdb.d/schema.sql` followed by every
+   CREATE TABLE/SEQUENCE, and the stack came up healthy with the e2e smoke
+   green (6/6 PASS, first-admin creation included). No regeneration is
+   needed; this audit risk (R1) is closed for the Docker path.
 2. **Alembic is orphaned**: schema.sql creates alembic_version with no row and
    the app never runs migrations at startup. Treat schema.sql as the source of
    truth until this is decided (audit work-plan item 3).
@@ -119,3 +139,9 @@ docker compose down -v       # nuclear: drop pgdata_ai2 (first init re-runs sche
   `pnpm exec vite build` both exit 0.)
 - `compose.yml` — db + app + opt-in monitoring profile, pinned project name.
 - `scripts/e2e_smoke.py` — the HTTP smoke from §3.
+- The image does NOT ship `tests/` or `frontend/index.html` (production
+  runtime needs neither) — see §3 for the in-container test path.
+- Verified on this host 2026-11-15 (task t_bdb15fb3): `docker compose build`
+  exit 0 (frontend vite build + backend pip install), `docker compose up -d`
+  → db + app healthy, e2e smoke 6/6 PASS against the running stack, pytest
+  in-container green with the tests copied in.
