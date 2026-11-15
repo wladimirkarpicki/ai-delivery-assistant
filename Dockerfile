@@ -41,6 +41,13 @@ COPY providers/ ./providers/
 COPY services/ ./services/
 # api.py mounts /static at startup; StaticFiles raises if the dir is absent.
 COPY static/ ./static/
+# The migration chain ships in the image so the container reconciles its own
+# schema at startup (R8): schema.sql only runs on a first init, so a volume
+# that predates it would otherwise stay behind forever. .dockerignore used to
+# exclude migrations/, which is why the running container could not run
+# alembic at all.
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 RUN useradd --create-home appuser \
@@ -54,4 +61,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 EXPOSE 8000
 
-CMD ["uvicorn", "api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# One schema source of truth at startup: the alembic chain (R8). On a fresh
+# volume, schema.sql already built the schema and stamped alembic_version at
+# the head (d4e7f1a2b3c5), so this step is a no-op - the fresh-boot proof is
+# on card t_873e9e73. On an older volume it applies exactly the missing
+# revisions instead of leaving the schema silently behind. PYTHONPATH is
+# needed because alembic is a console script: its sys.path does not include
+# the working directory (uvicorn's does).
+CMD ["bash", "-c", "PYTHONPATH=/app alembic upgrade head && exec uvicorn api:create_app --factory --host 0.0.0.0 --port 8000"]

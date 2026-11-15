@@ -1,23 +1,42 @@
+-- ai-delivery-assistant initial schema. Loaded by the postgres:16 init mount
+-- (compose.yml: ./schema.sql -> /docker-entrypoint-initdb.d/schema.sql), so it
+-- must initialize a fresh container database with nothing but psql.
+--
+-- Regenerated 2026-11-15 on PostgreSQL 16.16 (card t_873e9e73, findings
+-- R1/R2/R8) by 16.16's own pg_dump against a scratch database on the running
+-- postgres:16 instance, built from empty by the app's own alembic chain. It
+-- replaces a pg_dump 18.4 file that carried a VERSION-MISMATCH header (R1),
+-- left alembic_version with zero rows while the app has six revisions (R2:
+-- the first `alembic upgrade head` anyone ran replayed all of them onto an
+-- already-built schema), and created revoked_tokens without the primary key
+-- the model and migration d4e7f1a2b3c5 declare.
+--
+-- The alembic_version row below IS the R2 stamp: after this dump initializes
+-- a fresh volume, `alembic upgrade head` is a no-op. The app container runs
+-- `alembic upgrade head` at startup (see Dockerfile), so this file is the
+-- fresh-volume fast path and the migration chain stays the source of truth.
+--
+-- To regenerate, build head state in a scratch database and dump it:
+--   docker compose exec -T db psql -U postgres -d postgres \
+--     -c 'CREATE DATABASE aida_headbuild'
+--   DATABASE_URL=postgresql+psycopg://postgres:<pass>@db:5432/aida_headbuild \
+--     alembic upgrade head
+--   docker compose exec -T db pg_dump -U postgres -d aida_headbuild \
+--     --no-owner --no-privileges
+-- (full scripts on card t_873e9e73; the dump's own header records the server
+-- and pg_dump versions that produced it).
 --
 -- PostgreSQL database dump
 --
 
--- \restrict uKZrnmgMLjTrs3UJ2g7dWPPqjJNoyKPmmovsGiBzc9eBw3pJi69uYLMo7JaTOZ4  (commented: pg_dump 18 meta-command, psql 16 doesn't understand)
+\restrict eFVY746mwLu9k6YO8q8c51diO16jNCtkN7L2v25KSIhfimPR1T9Tc71s2h1DEDw
 
--- Dumped from database version 18.4
--- Dumped by pg_dump version 18.4
--- VERSION MISMATCH: this dump was produced by pg_dump 18.4, while production
--- and the Docker stack run PostgreSQL 16 (postgres:16, see compose.yml). No
--- database server was available here to re-dump it, so it still needs to be
--- regenerated on PostgreSQL 16 before it is treated as the schema source.
+-- Dumped from database version 16.16 (Debian 16.16-1.pgdg13+1)
+-- Dumped by pg_dump version 16.16 (Debian 16.16-1.pgdg13+1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
--- transaction_timeout is PostgreSQL 17+. This schema is loaded by the
--- postgres:16 container (see compose.yml), where the parameter does not
--- exist and the statement aborts the whole load, which leaves the
--- container unhealthy and the app never starting.
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -334,6 +353,16 @@ ALTER SEQUENCE public.review_resolutions_id_seq OWNED BY public.review_resolutio
 
 
 --
+-- Name: revoked_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.revoked_tokens (
+    jti character varying(64) NOT NULL,
+    expires_at timestamp with time zone NOT NULL
+);
+
+
+--
 -- Name: risks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -383,21 +412,6 @@ CREATE TABLE public.users (
     username character varying(80) NOT NULL,
     password_hash character varying(255) NOT NULL,
     role character varying(20) DEFAULT 'user'::character varying NOT NULL
-);
-
-
---
--- Logged-out token ids. Logout used to record these in an in-process set,
--- which meant the revocation stopped taking effect after a restart until
--- the token's own expiry. The id is the primary key so a check is one
--- index lookup, and expires_at lets the row be dropped once its token has
--- lapsed anyway. No foreign key to users on purpose: a revoked token has to
--- outlive the account it belonged to, or deleting a user revives every
--- token that user was ever issued.
---
-CREATE TABLE public.revoked_tokens (
-    jti character varying(64) NOT NULL,
-    expires_at timestamp with time zone NOT NULL
 );
 
 
@@ -492,6 +506,173 @@ ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_
 
 
 --
+-- Data for Name: action_items; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.action_items (id, project_id, title, details, owner, due_date, status, created_in_meeting_id, updated_in_meeting_id, completed_in_meeting_id, completed_at, canonical_title, title_embedding) FROM stdin;
+\.
+
+
+--
+-- Data for Name: alembic_version; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.alembic_version (version_num) FROM stdin;
+d4e7f1a2b3c5
+\.
+
+
+--
+-- Data for Name: blockers; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.blockers (id, project_id, title, description, status, created_in_meeting_id, updated_in_meeting_id, resolved_in_meeting_id, resolved_at, canonical_title, title_embedding) FROM stdin;
+\.
+
+
+--
+-- Data for Name: decisions; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.decisions (id, project_id, title, details, created_in_meeting_id, canonical_title, title_embedding) FROM stdin;
+\.
+
+
+--
+-- Data for Name: history_events; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.history_events (id, project_id, meeting_id, entity_type, entity_id, event_type, summary, before_data, after_data, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: meetings; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.meetings (id, project_id, title, source_filename, original_text, analysis_text, analysis_json, provider, model, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: project_states; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.project_states (id, project_id, delivery_status, progress_summary, completed_items, in_progress_items, updated_at, updated_in_meeting_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: projects; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.projects (id, name, description, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: review_resolutions; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.review_resolutions (id, history_event_id, action, target_item_id, note, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: revoked_tokens; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.revoked_tokens (jti, expires_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: risks; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.risks (id, project_id, title, description, impact, mitigation, status, created_in_meeting_id, updated_in_meeting_id, resolved_in_meeting_id, resolved_at, canonical_title, title_embedding) FROM stdin;
+\.
+
+
+--
+-- Data for Name: users; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.users (id, username, password_hash, role) FROM stdin;
+\.
+
+
+--
+-- Name: action_items_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.action_items_id_seq', 1, false);
+
+
+--
+-- Name: blockers_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.blockers_id_seq', 1, false);
+
+
+--
+-- Name: decisions_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.decisions_id_seq', 1, false);
+
+
+--
+-- Name: history_events_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.history_events_id_seq', 1, false);
+
+
+--
+-- Name: meetings_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.meetings_id_seq', 1, false);
+
+
+--
+-- Name: project_states_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.project_states_id_seq', 1, false);
+
+
+--
+-- Name: projects_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.projects_id_seq', 1, false);
+
+
+--
+-- Name: review_resolutions_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.review_resolutions_id_seq', 1, false);
+
+
+--
+-- Name: risks_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.risks_id_seq', 1, false);
+
+
+--
+-- Name: users_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.users_id_seq', 1, false);
+
+
+--
 -- Name: action_items action_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -577,6 +758,14 @@ ALTER TABLE ONLY public.projects
 
 ALTER TABLE ONLY public.review_resolutions
     ADD CONSTRAINT review_resolutions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: revoked_tokens revoked_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.revoked_tokens
+    ADD CONSTRAINT revoked_tokens_pkey PRIMARY KEY (jti);
 
 
 --
@@ -872,8 +1061,5 @@ ALTER TABLE ONLY public.risks
 -- PostgreSQL database dump complete
 --
 
--- \unrestrict and the \restrict on line 6 are a psql 18 meta-command pair.
--- psql 16 (the postgres:16 container) does not know either one, and the
--- closing one aborts the load even when the opening one is commented out,
--- because \unrestrict then reports "not currently in restricted mode".
+\unrestrict eFVY746mwLu9k6YO8q8c51diO16jNCtkN7L2v25KSIhfimPR1T9Tc71s2h1DEDw
 
