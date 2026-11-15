@@ -59,7 +59,8 @@ docker compose logs -f app    # watch startup
 ## 3. End-to-end test
 
 The app test suite (tests/) runs on an in-memory SQLite harness — it does not
-need the stack (113 passed with a stray `.env` moved aside; see the audit).
+need the stack (116 passed with a developer `.env` in place; the harness keeps
+it out of the test process, see tests/conftest.py).
 E2E means exercising the *running dockerized stack* over HTTP:
 
 ```bash
@@ -118,9 +119,10 @@ docker compose exec db psql -U "$DATABASE_USER" "$DATABASE_NAME" -c '\dt'   # sc
 2. **Alembic is orphaned**: schema.sql creates alembic_version with no row and
    the app never runs migrations at startup. Treat schema.sql as the source of
    truth until this is decided (audit work-plan item 3).
-3. **A developer `.env` on the host changes test results** — config_loader's
-   load_dotenv(override=True) replaces test tokens. For the unit suite, run
-   with .env moved aside (that is the 113-pass run, not a defect).
+3. **A developer `.env` on the host no longer changes test results** — tests/
+   conftest.py neutralises the loader for the test process so the pinned
+   tokens survive, the production override path is unchanged, and the
+   contract is pinned by tests/test_config_loader.py.
 
 ## 5. Teardown / reset
 
