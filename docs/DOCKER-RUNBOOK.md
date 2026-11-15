@@ -69,9 +69,14 @@ E2E means exercising the *running dockerized stack* over HTTP:
 #    the host python has the requirements installed (the Hermes-managed
 #    python does not ship pytest). Verified path, no host deps: run inside
 #    the image — requirements.txt ships pytest itself:
-docker compose cp tests app:/app/tests
+docker compose cp tests app:/tmp/aida-tests
 docker compose cp frontend/index.html app:/app/frontend/index.html
-docker compose exec -T app python -m pytest tests -q -p no:cacheprovider
+docker compose exec -T -w /app app python -m pytest /tmp/aida-tests -q -p no:cacheprovider
+#    Use a fresh path (/tmp/aida-tests), NOT /app/tests: an earlier in-container
+#    test pass leaves /app/tests behind, and `docker compose cp tests
+#    app:/app/tests` then nests into /app/tests/tests — pytest collection dies
+#    with "import file mismatch". Verified 2026-11-15 (run 50): 116 passed,
+#    exit 0 via the /tmp path.
 #    One test (test_csp_pins_the_one_inline_script_by_hash) reads
 #    frontend/index.html, which the image does not ship by design; without
 #    the second cp it fails with FileNotFoundError. That failure is an
@@ -146,4 +151,7 @@ docker compose down -v       # nuclear: drop pgdata_ai2 (first init re-runs sche
 - Verified on this host 2026-11-15 (task t_bdb15fb3): `docker compose build`
   exit 0 (frontend vite build + backend pip install), `docker compose up -d`
   → db + app healthy, e2e smoke 6/6 PASS against the running stack, pytest
-  in-container green with the tests copied in.
+  in-container green with the tests copied in. Re-verified live in run 50
+  (2026-11-15): stack still up and healthy (app + db, 0 tracebacks in logs),
+  HTTP probes 200 on / /health /api/health /docs /openapi.json, in-container
+  pytest 116 passed via the /tmp copy path above.
