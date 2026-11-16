@@ -35,7 +35,7 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       '@vitejs/plugin-react':
         specifier: ^6.2.1
-        version: 6.2.1(vite@8.3.6(esbuild@0.28.2))
+        version: 6.2.1(vite@8.3.8(esbuild@0.28.2))
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -46,11 +46,11 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
       vite:
-        specifier: ^8.3.6
-        version: 8.3.6(esbuild@0.28.2)
+        specifier: ^8.3.8
+        version: 8.3.8(esbuild@0.28.2)
       vitest:
         specifier: ^5.1.0
-        version: 5.1.0(jsdom@31.0.0)(vite@8.3.6(esbuild@0.28.2))
+        version: 5.1.0(jsdom@31.0.0)(vite@8.3.8(esbuild@0.28.2))
 
 packages:
 
@@ -1044,8 +1044,8 @@ packages:
   victory-vendor@37.3.6:
     resolution: {integrity: sha512-SbPDPdDBYp+5MJHhBCAyI7wKM3d5ivekigc2Dk2s7pgbZ9wIgIBYGVw4zGHBml/qTFbexrofXW6Gu4noGxrOwQ==}
 
-  vite@8.3.6:
-    resolution: {integrity: sha512-UI7dK29NnS54Fk+mmo7o+jI6U8Fp7hDl+X5Q1k45WH+d4dSlbLVUETGQ+hfkNgvLQGyoElPj837nZyv4MBc0VA==}
+  vite@8.3.8:
+    resolution: {integrity: sha512-LzOn3h9rG/0vhLdXrV4yJ4QFA9eEoqCl+Yx+kGJd7aB9w6nfNgVHKSYwLPZUHrz4ZGa+t+kXjV9itvcHDLQouA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -1462,19 +1462,19 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@vitejs/plugin-react@6.2.1(vite@8.3.6(esbuild@0.28.2))':
+  '@vitejs/plugin-react@6.2.1(vite@8.3.8(esbuild@0.28.2))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.3.6(esbuild@0.28.2)
+      vite: 8.3.8(esbuild@0.28.2)
 
-  '@vitest/mocker@5.1.0(vite@8.3.6(esbuild@0.28.2))':
+  '@vitest/mocker@5.1.0(vite@8.3.8(esbuild@0.28.2))':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       '@vitest/spy': 5.1.0
       estree-walker: 3.0.3
       magic-string: 1.4.5
     optionalDependencies:
-      vite: 8.3.6(esbuild@0.28.2)
+      vite: 8.3.8(esbuild@0.28.2)
 
   '@vitest/spy@5.1.0': {}
 
@@ -1927,7 +1927,7 @@ snapshots:
       d3-time: 3.1.0
       d3-timer: 3.0.1
 
-  vite@8.3.6(esbuild@0.28.2):
+  vite@8.3.8(esbuild@0.28.2):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -1938,10 +1938,10 @@ snapshots:
       esbuild: 0.28.2
       fsevents: 2.3.3
 
-  vitest@5.1.0(jsdom@31.0.0)(vite@8.3.6(esbuild@0.28.2)):
+  vitest@5.1.0(jsdom@31.0.0)(vite@8.3.8(esbuild@0.28.2)):
     dependencies:
       '@types/chai': 5.2.3
-      '@vitest/mocker': 5.1.0(vite@8.3.6(esbuild@0.28.2))
+      '@vitest/mocker': 5.1.0(vite@8.3.8(esbuild@0.28.2))
       chai: 6.3.0
       es-module-lexer: 2.3.2
       expect-type: 1.4.0
@@ -1952,7 +1952,7 @@ snapshots:
       tinybench: 6.2.3
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
-      vite: 8.3.6(esbuild@0.28.2)
+      vite: 8.3.8(esbuild@0.28.2)
       why-is-node-running: 3.2.1
     optionalDependencies:
       jsdom: 31.0.0
