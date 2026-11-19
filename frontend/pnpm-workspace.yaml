@@ -1,2 +1,21 @@
 allowBuilds:
   esbuild: true
+
+# Documented audit exception for exactly one advisory (owner ruling, issue #41).
+# GHSA-fc5q-39xc-vjpf (picomatch <=4.0.7, ReDoS through single-branch repeated
+# extglobs) was withdrawn upstream on 2026-11-18: GitHub and the picomatch
+# maintainer closed it as "not a security issue", and no patched picomatch ever
+# existed (the registry latest is 4.0.7). The package reaches this project only
+# through the dev toolchain (vite > tinyglobby > picomatch); nothing ships to
+# users. Registry audit backends can still serve the withdrawn entry while
+# advisory data replicates, which would fail the required "Frontend Audit
+# (pnpm audit)" check on main and block all delivery. auditConfig.ignoreGhsas
+# is pnpm's own per-advisory exception mechanism (verified on CI's pinned
+# pnpm 11.7.0 and on local pnpm 12.15.0): it suppresses exactly the ids listed
+# here, so any other HIGH advisory still fails the gate at
+# --audit-level=high. Re-check this entry on every audit run and remove it once
+# the registry audit backend no longer serves the advisory or a patched
+# picomatch is published.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-fc5q-39xc-vjpf
