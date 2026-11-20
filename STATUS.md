@@ -28,7 +28,7 @@ This file is the freeze state document: frozen commit, CI truth, final versions,
 
 ## Known issues at freeze (open)
 
-- **#47 [low]** coverage raise on project_memory / router / nvidia_provider / document_parser: in flight at freeze time (card t_56fc786d, branch `47-coverage-weakest-surfaces` unpushed). The audit verdict explicitly classed this as follow-up, not a freeze blocker.
+- **#47 [low]** coverage raise on project_memory / router / nvidia_provider / document_parser: in flight at freeze time (card t_56fc786d); **resolved after the freeze** by PR #61 on branch `47-coverage-weakest-surfaces` — 72 new tests, suite 116 -> 188 passed with a developer `.env` present, module coverage project_memory 68->99%, router 65->100%, nvidia_provider 70->98%, document_parser 73->99%, total 91->96%; production code unchanged, no coverage threshold added. The audit verdict classed this as follow-up, not a freeze blocker.
 - **#50 [low]** branch protection does not require PR reviews, so direct pushes to main are possible. Owner policy decision.
 - **#51 [low]** CSP `style-src` still carries 'unsafe-inline': the fix is fully specced but its card is stuck in a dispatcher crash loop (sec-profile worker transport, 18 crashes, no work ever started). The card cannot be archived from inside a worker dispatch context (the CLI refuses it), so archiving it is an operator action for the owner session. Re-dispatch the work after the transport is healthy; the full spec survives in the card thread.
 - **PR #58 (open)**: documented one-advisory pnpm exception for GHSA-fc5q-39xc-vjpf. The audit gate is green at 761825f without it; keep it ready in case the advisory resurfaces.
